@@ -9,7 +9,7 @@ A project to build Andrej Karpathy's "Cognitive Core" concept: a small, always-o
 3. [MiniCPM5-1B Technical Deep Dive](#3-minicpm5-1b-technical-deep-dive)
 4. [Variant Comparison](#4-variant-comparison)
 5. [Target Hardware](#5-target-hardware)
-6. [Environment Setup (WSL2 + ROCm)](#6-environment-setup-wsl2--rocm)
+6. [Environment Setup](#6-environment-setup)
 7. [Model Combination Pipeline](#7-model-combination-pipeline)
 8. [Post-Combination: GGUF Deployment](#8-post-combination-gguf-deployment)
 9. [Uncertainty Detection & Routing (Future Work)](#9-uncertainty-detection--routing-future-work)
@@ -207,7 +207,8 @@ At 1B scale, Q8_0 is both smaller AND faster than F16 (memory-bandwidth bound). 
 ### Server Specs
 - **CPU**: AMD Ryzen 7 7800X (8 cores / 16 threads)
 - **GPU**: AMD Radeon RX 7900 XTX (24GB VRAM, RDNA 3 / gfx1100)
-- **OS**: Windows Server with Docker
+- **Host OS**: ESXi 8.0
+- **ML VM**: Ubuntu 26.04 LTS with GPU passthrough (VMDirectPath I/O)
 
 ### VRAM Budget
 
@@ -219,74 +220,38 @@ At 1B scale, Q8_0 is both smaller AND faster than F16 (memory-bandwidth bound). 
 | DPO (full fine-tune) | ~18-22 GB | ✅ Tight but fits |
 | GGUF conversion | ~4 GB | ✅ Easy |
 
-### Why Linux Containers via WSL2
+### Why ESXi VM + GPU Passthrough (Not WSL2)
 
-Windows Containers do NOT support GPU passthrough for ML training. The required path is:
-```
-Windows Server → WSL2 → Ubuntu 24.04 → Docker (Linux containers) → ROCm 7.x → GPU access
-```
+Windows Containers do NOT support GPU passthrough for ML training. While WSL2 on Windows works, a native Ubuntu 26.04 VM on ESXi 8.0 is strictly better:
+
+| | WSL2 on Windows | ESXi VM |
+|---|---|---|
+| GPU access | Indirect (WSL2 + D3D12) | Direct passthrough (native ROCm) |
+| ROCm support | Limited, unofficial | Full, official packages |
+| Stability | Occasional WSL2 quirks | Stable, production-grade |
+| Resource control | Shares Windows resources | Dedicated CPU/RAM/disk |
+| Isolation | None — shares Windows kernel | Full VM isolation |
+| Recommended for | Quick dev/testing | **Serious training workloads** |
+
+Ubuntu 26.04 LTS ships ROCm in the standard package repos (tested on 7900 XTX), so no manual driver installation is needed beyond the standard apt packages.
 
 ---
 
-## 6. Environment Setup (WSL2 + ROCm)
+## 6. Environment Setup
 
-### Step 1: Enable WSL2 + Install Ubuntu
+> **Full step-by-step guide**: [docs/ESXi-Ubuntu-Setup.md](docs/ESXi-Ubuntu-Setup.md)
 
-Open PowerShell as Administrator:
+### Quick Summary
 
-```powershell
-wsl --install
-# Restart when prompted
-wsl --install -d Ubuntu-24.04
-```
+1. **BIOS**: Enable SVM + IOMMU
+2. **ESXi**: Enable passthrough for the 7900 XTX PCI devices, reboot host
+3. **Create VM**: Ubuntu 26.04, 8 vCPU, 16-32GB RAM (reserved), GPU passed through
+4. **Install ROCm**: `sudo apt install -y rocm-dev rocm-hip-sdk`
+5. **Set GPU arch**: `export HSA_OVERRIDE_GFX_VERSION=11.0.0`
+6. **Docker**: Install Docker, pull `goldengrapegentleman/unsloth-rocm:2026.1.4-rocm7.1-gfx1100`
+7. **Verify**: `python -c "import torch; print(torch.cuda.get_device_name(0))"` → `AMD Radeon RX 7900 XTX`
 
-Reboot. Ubuntu will prompt for username/password.
-
-### Step 2: Install ROCm 7.2 in WSL2
-
-Open Ubuntu WSL terminal:
-
-```bash
-# Update system
-sudo apt update && sudo apt upgrade -y
-
-# Install ROCm 7.2 (supports 7900 XTX gfx1100)
-sudo apt install -y wget gnupg2
-wget -qO - https://repo.radeon.com/rocm/rocm.gpg.key | sudo apt-key add -
-echo "deb [arch=amd64] https://repo.radeon.com/rocm/7.2/ubuntu jammy main" \
-    | sudo tee /etc/apt/sources.list.d/rocm.list
-sudo apt update
-sudo apt install -y rocm-dev
-
-# Add to PATH
-echo 'export PATH=/opt/rocm/bin:$PATH' >> ~/.bashrc
-echo 'export LD_LIBRARY_PATH=/opt/rocm/lib:$LD_LIBRARY_PATH' >> ~/.bashrc
-
-# Set GPU architecture (CRITICAL for 7900 XTX)
-echo 'export HSA_OVERRIDE_GFX_VERSION=11.0.0' >> ~/.bashrc
-source ~/.bashrc
-```
-
-### Step 3: Configure Docker Desktop
-
-1. Docker Desktop → Settings → General
-2. Enable **"Use the WSL 2 based engine"**
-3. Settings → Resources → WSL Integration → Enable for Ubuntu
-
-Verify in Ubuntu terminal:
-```bash
-docker --version
-```
-
-### Step 4: Pull Training Docker Image
-
-```bash
-docker pull goldengrapegentleman/unsloth-rocm:2026.1.4-rocm7.1-gfx1100
-```
-
-This image includes PyTorch 2.8.0+rocm7.1.0, Triton 3.4.0+rocm7.1.0, Unsloth, and all dependencies. Verified for gfx1100 (RDNA 3) at 1.1 samples/sec on Llama-3.2-1B SFT.
-
-### Step 5: Launch Training Container
+### Launch Training Container
 
 ```bash
 docker run -it \
@@ -295,21 +260,13 @@ docker run -it \
     --group-add video \
     --group-add render \
     --shm-size=16g \
-    -v /mnt/c/Users/<YOUR_USERNAME>/cognitive-core:/workspace \
+    -v /home/$USER/cognitive-core:/workspace \
     -e HSA_OVERRIDE_GFX_VERSION=11.0.0 \
     goldengrapegentleman/unsloth-rocm:2026.1.4-rocm7.1-gfx1100 \
     bash
 ```
 
-**Replace `<YOUR_USERNAME>`** with your Windows username. This maps a Windows folder into the container for persistence.
-
-Verify GPU access inside container:
-```bash
-python -c "import torch; print(torch.cuda.is_available()); print(torch.cuda.get_device_name(0))"
-# Expected output:
-# True
-# AMD Radeon RX 7900 XTX
-```
+> See [docs/ESXi-Ubuntu-Setup.md](docs/ESXi-Ubuntu-Setup.md) for full setup with troubleshooting.
 
 ---
 
@@ -491,7 +448,7 @@ cd llama.cpp
 
 ### Deploy with Ollama
 
-Files are accessible on Windows at `C:\Users\<YOUR_USERNAME>\cognitive-core\` via the Docker mount.
+Files are accessible from the Ubuntu VM at the mounted workspace path (`/home/$USER/cognitive-core/`).
 
 Create a `Modelfile`:
 ```
@@ -508,13 +465,13 @@ ollama run cognitive-core
 ### Deploy with llama.cpp (direct)
 
 ```bash
-# Inside WSL2 or Docker
+# Inside Docker or on the Ubuntu VM
 ./llama-server -m /workspace/final-cognitive-core-Q8_0.gguf \
     --host 0.0.0.0 --port 8080 \
     -t 8 -c 131072
 ```
 
-This exposes an OpenAI-compatible API at `http://localhost:8080/v1`.
+This exposes an OpenAI-compatible API at `http://<vm-ip>:8080/v1`.
 
 ---
 
