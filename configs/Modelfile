@@ -1,0 +1,7 @@
+# Ollama Modelfile for Cognitive Core
+# Usage: ollama create cognitive-core -f Modelfile
+
+FROM ./final-cognitive-core-Q8_0.gguf
+
+PARAMETER temperature 0.7
+PARAMETER top_p 0.95

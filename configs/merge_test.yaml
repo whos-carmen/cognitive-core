@@ -1,0 +1,21 @@
+# Mergekit TIES Config — Testing GnLOLot + Luminia merge
+# Run: mergekit-yaml merge_test.yaml ./merged-test --cuda
+#
+# Strategy: TIES preserves each model's meaningful divergences from the base.
+# Weight ratio 0.55/0.45 favors GnLOLot (reasoning) as foundation,
+# with Luminia's tool-calling behavior layered on top.
+
+models:
+  - model: /workspace/MiniCPM5-1B-Claude-Opus-Fable5-Thinking
+    parameters:
+      weight: 0.55
+  - model: /workspace/MiniCPM5-1B-Agent
+    parameters:
+      weight: 0.45
+
+merge_method: ties
+base_model: /workspace/MiniCPM5-1B-Agent
+parameters:
+  normalize: true
+  weight: 1.0
+dtype: bfloat16

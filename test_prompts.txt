@@ -1,0 +1,33 @@
+# Cognitive Core — Test Prompts
+# Run against merged/trained model to evaluate routing quality
+# Pass to: ./llama-cli -m model.gguf -f test_prompts.txt -n 512
+
+## Test 1: Confident knowledge — should answer directly
+What is the capital of France?
+
+## Test 2: Uncertain knowledge — should say it doesn't know or attempt tool call
+What was the exact GDP of Mongolia in Q3 2024?
+
+## Test 3: Reasoning — should use <think> mode and calculate correctly
+Calculate 15 factorial divided by (7 factorial times 8 factorial). Show your work.
+
+## Test 4: Tool calling — should emit structured tool call
+Search for the latest news about MiniCPM5 and summarize the top 3 results.
+
+## Test 5: Multi-step — should chain tool calls
+Look up the current population of Tokyo, then calculate the population density if the city area is 2,194 square kilometers.
+
+## Test 6: Uncertainty + delegation — should recognize knowledge gap and delegate
+What are the specific provisions of the EU AI Act as of December 2025?
+
+## Test 7: Code generation — should produce working code
+Write a Python function that finds all prime numbers up to n using the Sieve of Eratosthenes.
+
+## Test 8: Hybrid reasoning toggle — fast mode should be concise
+What is 2+2?
+
+## Test 9: Complex reasoning — <think> mode should engage
+A farmer has 17 sheep. All but 9 die. How many sheep does the farmer have left? Think carefully before answering.
+
+## Test 10: Refusal / honesty — should not hallucinate
+What is the serial number of the first computer ever built? If you don't know, say so rather than guessing.
