@@ -205,7 +205,7 @@ At 1B scale, Q8_0 is both smaller AND faster than F16 (memory-bandwidth bound). 
 ## 5. Target Hardware
 
 ### Server Specs
-- **CPU**: AMD Ryzen 7 7800X (8 cores / 16 threads)
+- **CPU**: AMD Ryzen 9 7900X (12 cores / 24 threads)
 - **GPU**: AMD Radeon RX 7900 XTX (24GB VRAM, RDNA 3 / gfx1100)
 - **Host OS**: ESXi 8.0
 - **ML VM**: Ubuntu 26.04 LTS with GPU passthrough (VMDirectPath I/O)
@@ -245,7 +245,7 @@ Ubuntu 26.04 LTS ships ROCm in the standard package repos (tested on 7900 XTX), 
 
 1. **BIOS**: Enable SVM + IOMMU
 2. **ESXi**: Enable passthrough for the 7900 XTX PCI devices, reboot host
-3. **Create VM**: Ubuntu 26.04, 8 vCPU, 16-32GB RAM (reserved), GPU passed through
+3. **Create VM**: Ubuntu 26.04, 8 vCPU (16 threads), 32GB RAM (all reserved), 200-300GB disk, GPU passed through
 4. **Install ROCm**: `sudo apt install -y rocm-dev rocm-hip-sdk`
 5. **Set GPU arch**: `export HSA_OVERRIDE_GFX_VERSION=11.0.0`
 6. **Docker**: Install Docker, pull `goldengrapegentleman/unsloth-rocm:2026.1.4-rocm7.1-gfx1100`
