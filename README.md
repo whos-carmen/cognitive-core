@@ -220,6 +220,17 @@ At 1B scale, Q8_0 is both smaller AND faster than F16 (memory-bandwidth bound). 
 | DPO (full fine-tune) | ~18-22 GB | ✅ Tight but fits |
 | GGUF conversion | ~4 GB | ✅ Easy |
 
+### VM Allocation (64GB host, unlicensed ESXi)
+
+| Consumer | Allocation | Notes |
+|---|---|---|
+| ESXi host | 4-8 GB | Hypervisor overhead |
+| Windows Server VM | 16-24 GB | Other workloads |
+| Ubuntu ML VM | **40 GB** (reserved) | Training + model loading + OS |
+| Buffer | ~4 GB | Headroom |
+
+8 vCPU limit per VM (unlicensed ESXi) — sufficient since GPU training is not CPU-bound.
+
 ### Why ESXi VM + GPU Passthrough (Not WSL2)
 
 Windows Containers do NOT support GPU passthrough for ML training. While WSL2 on Windows works, a native Ubuntu 26.04 VM on ESXi 8.0 is strictly better:
@@ -245,7 +256,7 @@ Ubuntu 26.04 LTS ships ROCm in the standard package repos (tested on 7900 XTX), 
 
 1. **BIOS**: Enable SVM + IOMMU
 2. **ESXi**: Enable passthrough for the 7900 XTX PCI devices, reboot host
-3. **Create VM**: Ubuntu 26.04, 8 vCPU (16 threads), 32GB RAM (all reserved), 200-300GB disk, GPU passed through
+3. **Create VM**: Ubuntu 26.04, 8 vCPU (unlicensed ESXi limit), 40GB RAM (all reserved), 200-300GB disk, GPU passed through
 4. **Install ROCm**: `sudo apt install -y rocm-dev rocm-hip-sdk`
 5. **Set GPU arch**: `export HSA_OVERRIDE_GFX_VERSION=11.0.0`
 6. **Docker**: Install Docker, pull `goldengrapegentleman/unsloth-rocm:2026.1.4-rocm7.1-gfx1100`

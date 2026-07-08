@@ -61,8 +61,8 @@ After reboot, verify in **Manage → Hardware → PCI Devices** that both show a
 | Name | `ubuntu-ml-training` |
 | OS | Ubuntu Linux (64-bit) |
 | Version | Ubuntu 26.04 LTS |
-| CPU | 8 vCPU (16 threads) — the 7900X has 12 cores / 24 threads |
-| RAM | 32 GB — reserve ALL (no swapping) |
+| CPU | 8 vCPU (unlicensed ESXi limit; 7900X has 24 threads) |
+| RAM | 40 GB — reserve ALL (no swapping) |
 | Disk | 200-300 GB (models + training data + containers + checkpoints) |
 | Network | VM Network (same as host) |
 | GPU | Passthrough device(s) — see below |
