@@ -254,23 +254,7 @@ Fast sanity check — blends weights via TIES to see if combining produces accep
 ```bash
 pip install mergekit
 
-cat > /workspace/merge_test.yaml << 'EOF'
-models:
-  - model: /workspace/MiniCPM5-1B-Claude-Opus-Fable5-Thinking
-    parameters:
-      weight: 0.55
-  - model: /workspace/MiniCPM5-1B-Agent
-    parameters:
-      weight: 0.45
-merge_method: ties
-base_model: /workspace/MiniCPM5-1B-Agent
-parameters:
-  normalize: true
-  weight: 1.0
-dtype: bfloat16
-EOF
-
-mergekit-yaml /workspace/merge_test.yaml /workspace/merged-test --cuda
+mergekit-yaml /workspace/configs/merge.yaml /workspace/models/merged --cuda
 ```
 
 Test the result with [test_prompts.txt](test_prompts.txt).
@@ -378,13 +362,21 @@ The actual orchestration framework (oracle delegation, tool execution, response 
 ```
 cognitive-core/
 ├── README.md
-├── Dockerfile
+├── Dockerfile                     # Training container (CUDA + Unsloth)
+├── .dockerignore
+├── .gitignore
 ├── configs/
-│   ├── merge_test.yaml          # Mergekit TIES config
-│   └── Modelfile                # Ollama deployment
-├── docs/                        # Documentation
-├── scripts/                     # Training & deployment automation
-└── test_prompts.txt             # 10 evaluation prompts
+│   ├── merge.yaml                 # Mergekit TIES config
+│   └── Modelfile                  # Ollama deployment
+├── docs/
+│   └── sft-runner.html            # Visual training guide
+├── scripts/
+│   ├── setup_instance.sh          # EC2 one-command setup (uv/uvx)
+│   ├── launch_container.sh        # Launch training container
+│   ├── run_sft.sh                 # SFT/DPO training launcher
+│   ├── dashboard.py               # Web dashboard for monitoring
+│   └── gguf_to_hf.py             # GGUF → HF conversion
+└── test_prompts.txt               # 10 evaluation prompts
 ```
 
 ---
