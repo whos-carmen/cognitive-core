@@ -83,8 +83,8 @@ VRAM fits both models simultaneously:
 | Model | Quant | VRAM | Port | Role |
 |---|---|---|---|---|
 | MiniCPM5-1B | Q8_0 (~1.1 GB) | 8081 | Router |
-| RAG model (7-8B) | Q4_K_M (~5.5 GB) | 8082 | Knowledge Q&A |
-| **Total** | | **~6.6 GB** | out of 24 available |
+| RAG model (7-8B) | Q4_K_M (~5.3 GB) | 8082 | Knowledge Q&A |
+| **Total** | | **~6.4 GB** | out of 24 available |
 
 ---
 
@@ -97,11 +97,13 @@ Top choices for the 7900 XTX:
 
 | Model | Quant | VRAM | Why |
 |---|---|---|---|
-| Llama-3.1-8B-Instruct | Q4_K_M | ~5.5 GB | Best instruction following, won't ignore context |
+| **Granite 4.1-8B-Instruct** | Q4_K_M | ~5.3 GB | Apache 2.0 license, strong instruction following, IBM enterprise provenance |
 | Qwen2.5-7B-Instruct | Q4_K_M | ~5 GB | Excellent RAG quality, long context |
 | Gemma-2-9B-it | Q4_K_M | ~6 GB | Google quality, concise |
 
-All three fit alongside MiniCPM5 with room for KV cache.
+All fit alongside MiniCPM5 with room for KV cache. **Granite 4.1-8B** is the
+recommended default — the Apache 2.0 license is cleaner for redistribution and
+IBM trains exclusively on permissively licensed data.
 
 ---
 
@@ -138,7 +140,7 @@ At only 0.3 GB, Granite fits easily on GPU alongside both models:
 | Component | VRAM |
 |---|---|
 | MiniCPM5-1B Q8_0 (router) | ~1.1 GB |
-| Llama-3.1-8B Q4_K_M (RAG) | ~5.5 GB |
+| Granite 4.1-8B Q4_K_M (RAG) | ~5.3 GB |
 | Granite embedding 149M | ~0.3 GB |
 | KV cache | ~2-3 GB |
 | **Total** | **~9 GB** — **15 GB free** on 7900 XTX |
@@ -291,10 +293,34 @@ QUERY (per user question)
 | Component | VRAM | Notes |
 |---|---|---|
 | MiniCPM5-1B Q8_0 | ~1.1 GB | Always loaded (router) |
-| RAG model (7-8B) Q4_K_M | ~5.5 GB | Loaded on demand |
+| Granite 4.1-8B Q4_K_M | ~5.3 GB | Loaded on demand (RAG) |
 | Granite embedding 149M | ~0.3 GB | GPU or CPU — 17 GB free either way |
 | KV cache (32K context × 2) | ~2-3 GB | Shared between models |
 | **Total running** | **~9 GB** | |
 | **Free** | **~15 GB** | For other tasks |
 
 Both models fit simultaneously on a 7900 XTX with 15 GB to spare.
+
+---
+
+## Advanced RAG Techniques
+
+### GraphRAG
+
+[Microsoft GraphRAG](https://graphrag.com) extends vector RAG by building a
+knowledge graph from your documents — extracting entities and relationships,
+then generating hierarchical community summaries. It can answer multi-hop
+questions that require following chains of relationships.
+
+GraphRAG runs locally (MIT license). The **LazyGraphRAG** mode defers
+summarization to query time, cutting indexing cost significantly.
+
+For the cognitive core, GraphRAG is a potential upgrade path if vector-only
+RAG isn't sufficient. Start with basic Chroma RAG, then add GraphRAG if you
+need multi-hop reasoning.
+
+### RAG Techniques Reference
+
+The [RAG_Techniques](https://github.com/NirDiamant/RAG_Techniques) repo (28K+
+stars) covers 42+ techniques with runnable notebooks: query transformations,
+fusion retrieval, reranking, Self-RAG, Corrective RAG, Agentic RAG, and more.

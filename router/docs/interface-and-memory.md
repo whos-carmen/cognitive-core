@@ -50,7 +50,7 @@ pi "What does the cognitive core do?"
 | Tool execution | ✅ (built-in tools) | — |
 | Routing decisions | — | ✅ MiniCPM5 |
 | Memory (tool-based) | — | ✅ memory_store/recall |
-| RAG | — | ✅ Chroma + Llama-3.1-8B |
+| RAG | — | ✅ Chroma + Granite 4.1-8B |
 | TUI / terminal UI | ✅ | — |
 | Session persistence | ✅ JSONL files | — |
 
@@ -308,7 +308,7 @@ All on the 7900 XTX machine. The remote client just needs a browser or terminal.
 | Component | VRAM | Where |
 |---|---|---|
 | MiniCPM5-1B Q8_0 (router) | ~1.1 GB | GPU (always loaded) |
-| Llama-3.1-8B Q4_K_M (RAG) | ~5.5 GB | GPU (on demand) |
+| Granite 4.1-8B Q4_K_M (RAG) | ~5.3 GB | GPU (on demand) |
 | Granite embedding 149M | ~0.3 GB | GPU or CPU (17 GB free either way) |
 | KV cache (32K × 2) | ~2-3 GB | GPU (shared) |
 | Runtime Dashboard | ~0 GB | CPU (no GPU needed) |

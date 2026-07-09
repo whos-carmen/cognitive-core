@@ -30,7 +30,7 @@ User / client (Runtime Dashboard, pi.dev, custom CLI)
     │  ├─ Answer directly → return response              │
     │  ├─ Tool call       → execute locally              │
     │  ├─ RAG             → query Chroma +               │
-    │  │                    Llama-3.1-8B (port 8082)     │
+    │  │                    Granite 4.1-8B (port 8082)     │
     │  └─ Delegate        → ask cloud oracle             │
     └────────────────────┬───────────────────────────────┘
                          │
@@ -106,7 +106,7 @@ It tells the model to:
 
 - Answer directly when confident
 - Use tools (`memory_store`, `memory_recall`, `web_search`, `web_fetch`, `code_run`) when needed
-- Route knowledge questions to RAG (Chroma + Llama-3.1-8B)
+  ́- Route knowledge questions to RAG (Chroma + Granite 4.1-8B)
 - Delegate or abstain when uncertain
 - Use XML `<tool_call>` format for tool calls
 
@@ -132,7 +132,7 @@ python -m sglang.launch_server \
     --tool-call-parser minicpm5
 
 # 2. Serve the RAG model (any serving layer)
-./llama-server -m llama-3.1-8b-Q4_K_M.gguf \
+./llama-server -m granite-4.1-8b-Q4_K_M.gguf \
     --host 0.0.0.0 --port 8082 \
     --n-gpu-layers 99
 
