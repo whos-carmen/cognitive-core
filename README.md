@@ -128,25 +128,38 @@ AWS EC2 g7e.2xlarge (Ubuntu 26.04 AMI)
 | Component | Spec |
 |---|---|
 | Instance | g7e.2xlarge |
-| CPU | 8 vCPUs (AMD EPYC) |
+| GPU | 1x NVIDIA RTX PRO 6000 Blackwell Server Edition (96 GB GDDR7 VRAM) |
+| CPU | 8 vCPUs (5th gen Intel Xeon Scalable) |
 | RAM | 64 GB |
-| GPU | 1x NVIDIA RTX 6000 (48 GB VRAM) |
-| Network | Up to 25 Gbps |
-| Storage | EBS (gp3 or io2) |
+| Local Storage | 1.9 TB NVMe SSD |
+| Network | Up to 50 Gbps |
+| EBS Bandwidth | Up to 5 Gbps |
 
 ### Why This Instance
 
-- 64GB RAM is more than enough — DPO peaks at ~23-28GB
+- **96 GB VRAM** — massive headroom for a 1B model (DPO peaks at ~23GB), can even train 7B+ models
+- 64GB system RAM is more than enough
+- 1.9 TB local NVMe SSD — no EBS bottleneck for training data streaming
 - 8 vCPUs sufficient — GPU training is not CPU-bound
-- NVIDIA GPU = CUDA = no ROCm quirks, full PyTorch ecosystem support
+- NVIDIA CUDA — full PyTorch ecosystem, no ROCm quirks
 - On-demand or spot pricing — spin up for training, shut down when done
 
 ### Storage Recommendation
 
+The g7e.2xlarge comes with 1.9 TB local NVMe SSD — plenty for models, training data, and checkpoints. Mount it:
+
+```bash
+lsblk  # Find the NVMe device (usually /dev/nvme1n1)
+sudo mkfs.ext4 /dev/nvme1n1
+sudo mkdir -p /mnt/training
+sudo mount /dev/nvme1n1 /mnt/training
+sudo chown ubuntu:ubuntu /mnt/training
+```
+
 | Volume | Size | Purpose |
 |---|---|---|
-| Root | 50 GB | OS + Docker |
-| Data | 200-300 GB (gp3) | Models + training data + checkpoints |
+| Root (EBS) | 50 GB gp3 | OS + Docker |
+| Local NVMe | 1.9 TB | Models + training data + checkpoints |
 
 ---
 
@@ -306,7 +319,7 @@ python code/train/dpo.py \
 
 Shows the model its own tool-calling successes and failures. Rewards acting (emitting tool calls) over stalling (reasoning about whether to act).
 
-**Time**: ~2-4 hours. **VRAM**: ~18-22 GB (comfortable fit on RTX 6000 48GB).
+**Time**: ~2-4 hours. **VRAM**: ~18-22 GB (massive headroom on 96 GB GPU).
 
 ---
 

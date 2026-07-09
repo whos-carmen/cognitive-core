@@ -17,7 +17,7 @@
        --image-id ami-xxx \
        --key-name your-key \
        --security-group-ids sg-xxx \
-       --block-device-mappings '[{"DeviceName":"/dev/sda1","Ebs":{"VolumeSize":100,"VolumeType":"gp3"}}]'
+       --block-device-mappings '[{"DeviceName":"/dev/sda1","Ebs":{"VolumeSize":50,"VolumeType":"gp3"}}]'
    ```
 
 2. SSH in
@@ -95,7 +95,7 @@
 
 ### Config: g7e.2xlarge Training Settings
 
-The g7e.2xlarge GPU is an NVIDIA RTX 6000 (48 GB VRAM). For a 1B model at BF16:
+The g7e.2xlarge GPU is an **NVIDIA RTX PRO 6000 Blackwell Server Edition (96 GB GDDR7)**. For a 1B model at BF16:
 
 | Setting | Value | Why |
 |---|---|---|
