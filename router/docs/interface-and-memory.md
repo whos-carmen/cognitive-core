@@ -133,11 +133,53 @@ no past decisions.
 └─────────────────────────────────────────────┘
 ```
 
-### Option 1: Mem0 (Recommended)
+### Option 1: Agent-Controlled Memory (Recommended for Tool-Skilled Models)
 
-[Mem0](https://mem0.ai) is a pluggable memory layer that adds persistent memory
-to any LLM system. You bolt it onto your existing router without changing
-the architecture.
+The model manages its own memory via tool calls — like an OS managing virtual memory.
+You expose memory operations as tools and the model decides when to store, recall,
+or archive.
+
+```python
+# Memory tools exposed to the model
+tools = [
+    {
+        "name": "memory_store",
+        "description": "Save a fact or preference for future conversations",
+        "parameters": {"fact": "string"}
+    },
+    {
+        "name": "memory_recall",
+        "description": "Recall relevant facts from past conversations",
+        "parameters": {"query": "string"}
+    },
+    {
+        "name": "memory_forget",
+        "description": "Remove a stored memory",
+        "parameters": {"id": "string"}
+    },
+]
+```
+
+**How it works at runtime:**
+
+```
+User: "I'm building a Kubernetes deployment system"
+      ↓
+Router calls: memory_store("User is building a K8s deployment system")
+
+User: "My YAML keeps failing validation"
+      ↓
+Router calls: memory_recall("user's project")
+      → retrieves: "User is building a Kubernetes deployment system"
+      ↓
+Router: "For your K8s deployment, check indentation..."
+```
+
+**Why this is best for your model:**
+- Your model is already trained on tool calling — this is just another tool
+- No separate memory system plumbing — the agent loop handles everything
+- The model decides what matters, not a heuristic
+- Works with Mem0 or Chroma as the backend storage
 
 ```python
 from mem0 import Memory
@@ -190,20 +232,7 @@ def handle_message(user_id, message):
     return response
 ```
 
-### Option 2: Letta (More Powerful, Heavier)
-
-[Letta](https://letta.com) (formerly MemGPT) is a full agent runtime with
-OS-inspired memory management. It's more powerful but replaces your entire
-stack rather than plugging in.
-
-**Use Letta if:** you want the model to autonomously manage its own memory
-(decide what to remember, what to archive, what to forget). This is closer
-to the "operating system for LLMs" concept.
-
-**Stick with Mem0 if:** you want a simple memory layer you add to the
-existing cognitive core architecture without rebuilding.
-
-### Option 3: DIY with Chroma (Simplest)
+### Option 2: DIY with Chroma (Simplest Backend)
 
 If you don't want external dependencies, use the same Chroma DB you're
 already running for RAG to store conversation memories:
@@ -231,14 +260,15 @@ results = collection.query(
 
 ### Memory Strategy Summary
 
-| Approach | Setup | Pros | Cons |
+| Approach | Backend | Pros | Cons |
 |---|---|---|---|
-| **Mem0** | `pip install mem0ai` | Plugs into existing stack, semantic search | External dependency |
-| **Letta** | Docker + CLI | OS-level memory management | Replaces your stack, heavy |
-| **DIY Chroma** | Already have it | No new dependencies | Manual management |
+| **Agent-controlled** (tool calls) | Mem0 | Automatic, semantic search, model decides | External dep |
+| **Agent-controlled** (tool calls) | Chroma | No new deps, already have it | Manual query format |
 
-**Recommendation: Start with DIY Chroma** (you already have it from RAG),
-then move to Mem0 if you need better retrieval quality.
+**Recommendation:** Start with agent-controlled memory backed by Chroma
+(same DB you already run for RAG). Add Mem0 later if you want better
+semantic search quality. The model's tool-calling interface stays the same
+regardless of the backend — only the storage layer changes.
 
 ---
 
@@ -260,18 +290,18 @@ displays it in real-time.
                      └──────────┬───────────┘
                                 │ HTTP (OpenAI-compatible)
                                 ▼
-                     ┌──────────────────────┐
-                     │  Memory Layer         │
-                     │  (Mem0 / Chroma)      │
-                     └──────────┬───────────┘
-                                │ injected into prompt as context
-                                ▼
-                     ┌──────────────────────┐
-                     │  Router (port 8081)   │
-                     │  MiniCPM5-1B Q8_0     │
-                     │  decides: answer /    │
-                     │  tool / RAG / memory  │
-                     └──────────┬───────────┘
+                     ┌────────────────────────────────────────┐
+                     │  Router (MiniCPM5, port 8081)          │
+                     │                                        │
+                     │  The model manages its own memory      │
+                     │  via tool calls:                       │
+                     │    memory_store("fact")                 │
+                     │    memory_recall("query")               │
+                     │    memory_archive("summary")            │
+                     │                                        │
+                     │  And routes between:                   │
+                     │    answer / tool / RAG / delegate      │
+                     └──────────┬─────────────────────────────┘
                                 │
                 ┌───────────────┼───────────────┐
                 ▼               ▼               ▼

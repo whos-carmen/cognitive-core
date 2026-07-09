@@ -18,22 +18,21 @@ Route requests between direct answering, tool calling, RAG, and delegation.
 User / client (Open WebUI, CLI, custom app)
          │
          ▼
-┌──────────────────────────────────┐
-│  Memory Layer (Mem0 / Chroma)    │
-│  retrieves relevant context from  │
-│  past conversations / sessions    │
-└────────────┬─────────────────────┘
-             │ memory injected into prompt
-             ▼
     llama-server (port 8081) ← MiniCPM5-1B Q8_0
          │
-    ┌────┴──────────────────────────┐
-    │  Router decides:              │
-    ├── Answer directly             │
-    ├── Tool call → execute locally │
-    ├── RAG → query Chroma +       │
-    │       Llama-3.1-8B (port 8082)│
-    └── Delegate → ask cloud oracle │
+    ┌────┴──────────────────────────────────────┐
+    │  Router decides via tool calls:            │
+    │                                            │
+    │  memory_store("fact")  → persist fact      │
+    │  memory_recall("q")    → get past context  │
+    │  ───────────────────────────────────────── │
+    │  Answer directly       → return response   │
+    │  Tool call             → execute locally   │
+    │  RAG                   → query Chroma +    │
+    │                          Llama-3.1-8B      │
+    │                           (port 8082)      │
+    │  Delegate              → ask cloud oracle  │
+    └────────────────────────────────────────────┘
          │
          ▼
     Runtime Dashboard (port 8766)
