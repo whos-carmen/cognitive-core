@@ -39,6 +39,29 @@ User / client (Runtime Dashboard, pi.dev, custom CLI)
     shows every decision, RAG query, tool call, memory access
 ```
 
+### Data Ingestion
+
+For RAG to work, documents need to get into Chroma first. This is the
+**ingestion pipeline** — separate from the query path, run once per document set:
+
+```
+Web pages, PDFs, docs
+         │
+         ▼
+  Firecrawl (cloud API, free tier 500 pages)
+  or Crawl4AI (local, open source)
+         │
+         ▼
+  Clean markdown text
+         │
+         ▼
+  Chunk → Embed (BGE-small, CPU) → Store in Chroma
+```
+
+Firecrawl handles JavaScript rendering and extracts the main content from
+web pages as clean markdown. Crawl4AI is the open-source alternative that
+runs entirely locally.
+
 ## Interfaces
 
 | Interface | How | Purpose |
