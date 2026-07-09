@@ -7,6 +7,7 @@ Route requests between direct answering, tool calling, RAG, delegation, and memo
 
 | Path | Purpose |
 |---|---|
+| `configs/system-prompt.md` | System prompt — defines the router's behavior and tool definitions |
 | `scripts/runtime_dashboard.py` | Observability dashboard (port 8766) |
 | `docs/rag-architecture.md` | RAG design: serving layer, vector DB, ingestion |
 | `docs/interface-and-memory.md` | Web UI, CLI, memory (Pattern C: agent-controlled) |
@@ -97,6 +98,29 @@ def cognitive_memory_recall(query: str) -> str:
 
 Pi handles the agent loop, session persistence, and tool execution; the cognitive
 core handles routing, RAG, and memory decisions.
+
+## System Prompt
+
+The router's behavior is defined in [configs/system-prompt.md](configs/system-prompt.md).
+It tells the model to:
+
+- Answer directly when confident
+- Use tools (`memory_store`, `memory_recall`, `web_search`, `web_fetch`, `code_run`) when needed
+- Route knowledge questions to RAG (Chroma + Llama-3.1-8B)
+- Delegate or abstain when uncertain
+- Use XML `<tool_call>` format for tool calls
+
+The prompt is loaded at request time and sent as the system message:
+
+```python
+system_prompt = open("configs/system-prompt.md").read()
+messages = [
+    {"role": "system", "content": system_prompt},
+    {"role": "user", "content": user_input}
+]
+```
+
+Edit this file to change the model's behavior without retraining.
 
 ## Quick Start
 
