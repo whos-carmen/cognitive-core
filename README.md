@@ -314,18 +314,26 @@ Shows the model its own tool-calling successes and failures. Rewards acting (emi
 
 ```bash
 cd /workspace
-git clone https://github.com/ggerganov/llama.cpp
+
+# Download prebuilt llama.cpp binaries (no build required)
+curl -L https://github.com/ggerganov/llama.cpp/releases/latest/download/llama-bintools-linux-x64.tar.gz \
+    | tar xz -C /usr/local/bin/
 
 # Convert to F16 (intermediate step for quantization)
-python llama.cpp/convert_hf_to_gguf.py /workspace/final-cognitive-core \
-    --outfile /workspace/final-cognitive-core-f16.gguf --outtype f16
+python3 -c "
+import gguf
+from gguf.convert import convert_hf_to_gguf
+convert_hf_to_gguf('/workspace/final-cognitive-core', 'final-cognitive-core-f16.gguf')
+" 2>/dev/null || \
+python3 /workspace/llama.cpp/convert_hf_to_gguf.py \
+    /workspace/final-cognitive-core \
+    --outfile final-cognitive-core-f16.gguf --outtype f16
 
 # Quantize to Q8_0 (near-lossless, faster than F16)
-cd llama.cpp
-./llama-quantize ../final-cognitive-core-f16.gguf ../final-cognitive-core-Q8_0.gguf Q8_0
+llama-quantize final-cognitive-core-f16.gguf final-cognitive-core-Q8_0.gguf Q8_0
 
 # Delete F16 — only needed as an intermediate
-rm ../final-cognitive-core-f16.gguf
+rm final-cognitive-core-f16.gguf
 ```
 
 ### Upload to HuggingFace (Private Repo)
@@ -333,22 +341,17 @@ rm ../final-cognitive-core-f16.gguf
 Push the final Q8_0 model to a private HuggingFace repo for storage and sharing:
 
 ```bash
-# Install huggingface-cli if not present
-pip install huggingface_hub
-
-# Log in with a User Access Token
-# Create one at huggingface.co/settings/tokens
-huggingface-cli login --token hf_your_token_here
+# Login and upload via uvx (no pip install needed)
+uvx huggingface-cli login --token hf_your_token_here
 
 # Create a private model repo
-huggingface-cli repo create your-org/cognitive-core-v1 \
+uvx huggingface-cli repo create your-org/cognitive-core-v1 \
     --type model --private
 
 # Upload the single Q8_0 file
-huggingface-cli upload your-org/cognitive-core-v1 \
-    /workspace/final-cognitive-core-Q8_0.gguf \
-    /cognitive-core-v1-Q8_0.gguf \
-    --repo-type model
+uvx huggingface-cli upload your-org/cognitive-core-v1 \
+    final-cognitive-core-Q8_0.gguf \
+    cognitive-core-v1-Q8_0.gguf --repo-type model
 ```
 
 ```bash

@@ -37,15 +37,15 @@
    nvidia-smi
    docker --version
    uv --version
-   docker images | grep cognitive-core
+   docker images | grep unsloth
    ```
 
-6. Clone repo (if not already cloned)
+6. Clone repo
    ```
    git clone https://github.com/whos-carmen/cognitive-core.git && cd cognitive-core
    ```
 
-****Time**: ~30 min.
+**Time**: ~30 min.
 
 ---
 
@@ -60,12 +60,17 @@
    bash scripts/launch_container.sh
    ```
 
-2. Inside container, download models
+2. Inside container, download models via uvx
    ```
-   cd /workspace
-   git lfs install
-   git clone https://huggingface.co/GnLOLot/MiniCPM5-1B-Claude-Opus-Fable5-Thinking /workspace/models/GnLOLot
-   git clone https://huggingface.co/Luminia/MiniCPM5-1B-Agent /workspace/models/Luminia
+   mkdir -p /workspace/models
+
+   uvx huggingface-cli download \
+       GnLOLot/MiniCPM5-1B-Claude-Opus-Fable5-Thinking \
+       --local-dir /workspace/models/GnLOLot
+
+   uvx huggingface-cli download \
+       Luminia/MiniCPM5-1B-Agent \
+       --local-dir /workspace/models/Luminia
    ```
 
 3. Run merge
@@ -86,7 +91,20 @@
 
 ## Phase 2: SFT Training
 
-**Goal**: Fine-tune the merged model on 45K tool-calling examples.
+**Goal**: Fine-tune the merged model on 45K tool-calling examples (3 epochs).
+
+### Config: g7e.2xlarge Training Settings
+
+The g7e.2xlarge GPU has ~24-48 GB VRAM. For a 1B model at BF16:
+
+| Setting | Value | Why |
+|---|---|---|
+| batch size per GPU | 1 | Keeps activation memory low |
+| gradient accumulation | 24 | Effective batch size = 24 |
+| gradient checkpointing | on (#) | Saves VRAM at cost of compute |
+| max sequence length | 24576 | Uses full 24K context |
+| precision | BF16 | Standard for 1B models |
+| epochs | 3 | Start here for convergence |
 
 ### Steps
 
@@ -96,34 +114,66 @@
    cd /workspace/code
    ```
 
-2. Build the training dataset
+2. Build the raw training dataset
    ```
    python code/data/build_v4.py
    ```
 
-3. Run SFT
+3. Pre-tokenize the dataset (caches tokenized data so training restart is instant)
+   ```
+   python -c "
+   from transformers import AutoTokenizer
+   from datasets import load_dataset
+   import json, os
+
+   tokenizer = AutoTokenizer.from_pretrained('/workspace/models/merged')
+   dataset = load_dataset('json', data_files='dataset/train_v4.jsonl', split='train')
+
+   def tokenize_fn(examples):
+       texts = []
+       for msgs in examples['messages']:
+           text = tokenizer.apply_chat_template(msgs, tokenize=False)
+           texts.append(text)
+       tok = tokenizer(texts, truncation=True, max_length=24576, padding=False)
+       return tok
+
+   tokenized = dataset.map(tokenize_fn, batched=True, remove_columns=dataset.column_names)
+   tokenized.save_to_disk('dataset/train_v4_tokenized')
+   print(f'Tokenized {len(tokenized)} examples → dataset/train_v4_tokenized/')
+   "
+   ```
+
+   This creates a cached copy that loads instantly on restart. If training crashes, just re-run the SFT command — it will load the pre-tokenized data and resume from the last checkpoint.
+
+4. Run SFT (3 epochs)
    ```
    python code/train/sft.py \
        --model /workspace/models/merged \
-       --train_file dataset/train_v4.jsonl \
+       --train_file dataset/train_v4_tokenized \
        --out /workspace/train/outputs/sft_claude_agent \
-       --epochs 1 \
+       --epochs 3 \
        --bsz 1 \
        --accum 24 \
        --lr 1e-5 \
        --max_len 24576 \
-       --train_cap 24576
+       --train_cap 24576 \
+       --grad_ckpt
    ```
 
-4. On host (separate terminal), launch dashboard
+   **If training crashes**: Re-run the same command. It will:
+   - Load pre-tokenized data instantly (saves ~5 min)
+   - Auto-resume from the latest checkpoint in `/workspace/train/outputs/sft_claude_agent/`
+   - Continue from where it left off
+
+5. On host (separate terminal), launch dashboard
    ```
    python3 scripts/dashboard.py --port 8765 --host 0.0.0.0
    # Open http://<instance-ip>:8765
    ```
 
-5. Monitor training loss curve and GPU utilization
+6. Monitor training loss curve and GPU utilization
 
-6. After SFT completes, test it
+7. After SFT completes, test it
    ```
    python -c "
    from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -135,7 +185,7 @@
    "
    ```
 
-**Time**: ~3-6 hr.
+**Time**: ~6-12 hr (3 epochs vs 1).
 
 ---
 
@@ -184,43 +234,47 @@
 
 1. Exit container (or in a new terminal)
 
-2. Build llama.cpp tools
+2. Download prebuilt llama.cpp binaries (no build needed)
    ```
-   cd /workspace
-   git clone https://github.com/ggerganov/llama.cpp
-   cd llama.cpp && make -j8
+   curl -L https://github.com/ggerganov/llama.cpp/releases/latest/download/llama-bintools-linux-x64.tar.gz \
+       | tar xz -C /usr/local/bin/
    ```
 
 3. Convert to F16
    ```
-   python convert_hf_to_gguf.py /workspace/train/outputs/final-cognitive-core \
-       --outfile /workspace/train/outputs/final-cognitive-core-f16.gguf \
+   python3 /workspace/llama.cpp/convert_hf_to_gguf.py \
+       /workspace/train/outputs/final-cognitive-core \
+       --outfile final-cognitive-core-f16.gguf \
        --outtype f16
+   ```
+   If the convert script isn't included in the prebuilt bins, install from PyPI:
+   ```
+   uvx pip install gguf
+   python3 -m gguf.convert /workspace/train/outputs/final-cognitive-core \
+       --outfile final-cognitive-core-f16.gguf
    ```
 
 4. Quantize to Q8_0
    ```
-   ./llama-quantize /workspace/train/outputs/final-cognitive-core-f16.gguf \
-       /workspace/train/outputs/final-cognitive-core-Q8_0.gguf Q8_0
+   llama-quantize final-cognitive-core-f16.gguf final-cognitive-core-Q8_0.gguf Q8_0
    ```
 
 5. Delete the F16 intermediate
    ```
-   rm /workspace/train/outputs/final-cognitive-core-f16.gguf
+   rm final-cognitive-core-f16.gguf
    ```
 
-6. Install huggingface-hub
+6. Login to HuggingFace via uvx
    ```
-   pip install huggingface_hub
+   uvx huggingface-cli login --token hf_your_token_here
    ```
 
-7. Login and upload
+7. Create a private repo and upload
    ```
-   huggingface-cli login --token hf_your_token_here
-   huggingface-cli repo create your-org/cognitive-core-v1 --type model --private
-   huggingface-cli upload your-org/cognitive-core-v1 \
-       /workspace/train/outputs/final-cognitive-core-Q8_0.gguf \
-       /cognitive-core-v1-Q8_0.gguf --repo-type model
+   uvx huggingface-cli repo create your-org/cognitive-core-v1 --type model --private
+   uvx huggingface-cli upload your-org/cognitive-core-v1 \
+       final-cognitive-core-Q8_0.gguf \
+       cognitive-core-v1-Q8_0.gguf --repo-type model
    ```
 
 **Time**: ~15 min.
@@ -235,7 +289,8 @@
 
 1. Run the evaluation suite
    ```
-   python eval/run_eval.py --model /workspace/train/outputs/final-cognitive-core-Q8_0.gguf \
+   python eval/run_eval.py \
+       --model final-cognitive-core-Q8_0.gguf \
        --base-url http://localhost:8080/v1
    ```
 
@@ -280,16 +335,17 @@
    ]}
    ```
 
-3. Append to training data
+3. Append to training data and re-tokenize
    ```
    cat code/dataset/train_v4.jsonl my_new_data.jsonl > code/dataset/train_v4_extended.jsonl
+   # Re-run the pre-tokenization script from Phase 2 with the new file
    ```
 
 4. Re-run SFT (1 epoch on extended data, starting from previous SFT checkpoint)
    ```
    python code/train/sft.py \
        --model /workspace/models/merged \
-       --train_file code/dataset/train_v4_extended.jsonl \
+       --train_file code/dataset/train_v4_tokenized \
        --out /workspace/train/outputs/sft_v2 \
        --epochs 1 --bsz 1 --accum 24 --lr 1e-5
    ```
@@ -314,7 +370,9 @@
 
 7. Re-run eval
    ```
-   python eval/run_eval.py ...
+   python eval/run_eval.py \
+       --model cognitive-core-v2-Q8_0.gguf \
+       --base-url http://localhost:8080/v1
    ```
 
 8. Repeat until all categories meet target scores
@@ -350,16 +408,15 @@
 3. Provision EBS-backed storage for checkpoints, use S3 for final models
    ```
    aws s3 mb s3://cognitive-core-checkpoints
-   aws s3 sync /workspace/train/outputs s3://cognitive-core-checkpoints/runs/run-001
    ```
 
 4. Automate the full pipeline
    ```
-   # scripts/run_training.sh already exists — extend to:
-   # 1. Launch instance from AMI
+   # 1. Launch spot instance from AMI
    # 2. SSH in
-   # 3. Run merge → SFT → DPO → convert → upload
-   # 4. Terminate instance
+   # 3. Pull latest repo
+   # 4. Run merge → SFT → DPO → convert → upload
+   # 5. Terminate instance
    ```
 
 **Time**: ~1 hr to set up, savings of 60-70% per training run.
@@ -371,7 +428,7 @@
 ```
 Phase 0: Setup        30 min     (once)
 Phase 1: Merge         5 min     (once)
-Phase 2: SFT         3-6 hr     (per iteration)
+Phase 2: SFT         6-12 hr    (3 epochs, per iteration)
 Phase 3: DPO         2-4 hr     (per iteration)
 Phase 4: Upload       15 min     (per iteration)
 Phase 5: Eval         30 min     (per iteration)
@@ -379,5 +436,5 @@ Phase 6: Iterate    5-10 hr     (per iteration, optional)
 Phase 7: Cost Opt     1 hr       (one-time automation)
 ```
 
-First full run (Phases 0-5): ~7-11 hr.
+First full run (Phases 0-5): ~9-17 hr.
 Each iteration (Phases 2-6 on spot): ~5-10 hr at ~$1-2/hr.

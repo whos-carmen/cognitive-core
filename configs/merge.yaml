@@ -2,15 +2,15 @@
 # Run: mergekit-yaml merge.yaml /workspace/models/merged --cuda
 
 models:
-  - model: /workspace/models/GnLOLot-MiniCPM5-1B-Claude-Opus-Fable5-Thinking
+  - model: /workspace/models/GnLOLot
     parameters:
       weight: 0.55
-  - model: /workspace/models/Luminia-MiniCPM5-1B-Agent-HF
+  - model: /workspace/models/Luminia
     parameters:
       weight: 0.45
 
 merge_method: ties
-base_model: /workspace/models/Luminia-MiniCPM5-1B-Agent-HF
+base_model: /workspace/models/Luminia
 parameters:
   normalize: true
   weight: 1.0
