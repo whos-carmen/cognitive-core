@@ -342,14 +342,14 @@ Push the final Q8_0 model to a private HuggingFace repo for storage and sharing:
 
 ```bash
 # Login and upload via uvx (no pip install needed)
-uvx --from huggingface_hub hf login --token hf_your_token_here
+uvx hf login --token hf_your_token_here
 
 # Create a private model repo
-uvx --from huggingface_hub hf repo create your-org/cognitive-core-v1 \
+uvx hf repo create your-org/cognitive-core-v1 \
     --type model --private
 
 # Upload the single Q8_0 file
-uvx --from huggingface_hub hf upload your-org/cognitive-core-v1 \
+uvx hf upload your-org/cognitive-core-v1 \
     final-cognitive-core-Q8_0.gguf \
     cognitive-core-v1-Q8_0.gguf --repo-type model
 ```

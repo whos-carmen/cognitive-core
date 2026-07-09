@@ -64,11 +64,11 @@
    ```
    mkdir -p /workspace/models
 
-   uvx --from huggingface_hub hf download \
+   uvx hf download \
        GnLOLot/MiniCPM5-1B-Claude-Opus-Fable5-Thinking \
        --local-dir /workspace/models/GnLOLot
 
-   uvx --from huggingface_hub hf download \
+   uvx hf download \
        Luminia/MiniCPM5-1B-Agent \
        --local-dir /workspace/models/Luminia
    ```
@@ -266,13 +266,13 @@ The g7e.2xlarge GPU has ~24-48 GB VRAM. For a 1B model at BF16:
 
 6. Login to HuggingFace via uvx
    ```
-   uvx --from huggingface_hub hf login --token hf_your_token_here
+   uvx hf login --token hf_your_token_here
    ```
 
 7. Create a private repo and upload
    ```
-   uvx --from huggingface_hub hf repo create your-org/cognitive-core-v1 --type model --private
-   uvx --from huggingface_hub hf upload your-org/cognitive-core-v1 \
+   uvx hf repo create your-org/cognitive-core-v1 --type model --private
+   uvx hf upload your-org/cognitive-core-v1 \
        final-cognitive-core-Q8_0.gguf \
        cognitive-core-v1-Q8_0.gguf --repo-type model
    ```
