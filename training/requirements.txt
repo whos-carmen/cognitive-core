@@ -1,0 +1,31 @@
+# Cognitive Core — Training Dependencies
+# Installed inside the Docker container (see Dockerfile)
+
+# Core training
+liger-kernel
+transformers>=4.45.0
+datasets
+accelerate
+peft
+trl>=0.12.0
+
+# Unsloth extras
+unsloth
+
+# Quantization & model conversion
+gguf
+safetensors
+bitsandbytes
+
+# Merge
+mergekit
+
+# Evaluation & utilities
+httpx
+numpy
+scipy
+scikit-learn
+
+# Monitoring
+tensorboard
+wandb

@@ -3,12 +3,12 @@
 Serves a real-time-updating dashboard for SFT/DPO training runs.
 
 Usage:
-    python scripts/dashboard.py [--port 8765]
+    python scripts/dashboard.py [--port 8765] [--token SECRET]
 """
 import argparse, json, os, datetime, subprocess, glob, time
 
 PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-LOG_DIR = os.path.join(PROJ, "models", "logs")
+LOG_DIR = os.path.join(PROJ, "train", "logs")
 SFT_LOG = os.path.join(LOG_DIR, "sft.log")
 SFT_METRICS = os.path.join(LOG_DIR, "sft_metrics.jsonl")
 DPO_METRICS = os.path.join(LOG_DIR, "dpo_metrics.jsonl")
@@ -16,6 +16,10 @@ TRAIN_DIR = os.path.join(PROJ, "train")
 
 # AWS g7e.2xlarge pricing (on-demand, us-east-1 — update for your region)
 HOURLY_RATE = 2.81  # USD/hour on-demand
+
+# Global auth token (set via --token)
+DASHBOARD_TOKEN = None
+
 
 def parse_metrics(path, last_n=200):
     """Parse a metrics.jsonl file, return last N entries."""
@@ -28,7 +32,7 @@ def parse_metrics(path, last_n=200):
             if line:
                 try:
                     entries.append(json.loads(line))
-                except:
+                except (json.JSONDecodeError, ValueError):
                     pass
     return entries[-last_n:]
 
@@ -55,8 +59,8 @@ def get_gpu_info():
         if not devices:
             return [{"name": "GPU", "temp": "?", "gpu_usage": "?", "vram_used_mb": "?", "vram_total_mb": "?", "vram_pct": 0, "power_w": "?"}]
         return devices
-    except:
-        return [{"name": "GPU", "temp": "?", "gpu_usage": "?", "vram_used_mb": "?", "vram_total_mb": "?", "vram_pct": 0, "power_w": "?"}]
+    except (subprocess.SubprocessError, FileNotFoundError, ValueError) as e:
+        return [{"name": "GPU", "temp": "?", "gpu_usage": "?", "vram_used_mb": "?", "vram_total_mb": "?", "vram_pct": 0, "power_w": f"err: {e}"}]
 
 def get_system_info():
     """Get CPU/memory/disk usage."""
@@ -66,7 +70,7 @@ def get_system_info():
         load = os.getloadavg()
         info["cpu_load"] = f"{load[0]:.1f} / {load[1]:.1f} / {load[2]:.1f}"
         info["cpu_pct"] = round(load[0] / os.cpu_count() * 100, 1)
-    except:
+    except OSError:
         info["cpu_load"] = "?"
         info["cpu_pct"] = 0
     try:
@@ -77,7 +81,7 @@ def get_system_info():
         info["ram_used"] = int(parts[2])
         info["ram_total"] = int(parts[1])
         info["ram_pct"] = round(int(parts[2]) / int(parts[1]) * 100, 1)
-    except:
+    except (subprocess.SubprocessError, IndexError, ValueError, ZeroDivisionError):
         info["ram_used"] = 0
         info["ram_total"] = 0
         info["ram_pct"] = 0
@@ -87,7 +91,7 @@ def get_system_info():
         info["disk_used_gb"] = round((st.f_blocks - st.f_bavail) * st.f_frsize / (1024**3), 1)
         info["disk_total_gb"] = round(st.f_blocks * st.f_frsize / (1024**3), 1)
         info["disk_pct"] = round(info["disk_used_gb"] / info["disk_total_gb"] * 100, 1) if info["disk_total_gb"] > 0 else 0
-    except:
+    except (OSError, ZeroDivisionError):
         info["disk_used_gb"] = 0
         info["disk_total_gb"] = 0
         info["disk_pct"] = 0
@@ -123,7 +127,7 @@ def get_training_info(metrics):
                 t1 = datetime.datetime.fromisoformat(first_ts.replace("Z", "+00:00"))
                 t2 = datetime.datetime.fromisoformat(last_ts.replace("Z", "+00:00"))
                 elapsed_s = (t2 - t1).total_seconds()
-        except:
+        except (ValueError, TypeError):
             pass
     hours = elapsed_s / 3600 if elapsed_s > 0 else 0
     cost = hours * HOURLY_RATE
@@ -134,23 +138,27 @@ def get_training_info(metrics):
         "cost": round(cost, 2),
     }
 
-class DashboardHandler:
-    """Simple HTTP handler using http.server."""
-    from http.server import BaseHTTPRequestHandler
-    from urllib.parse import urlparse
-
-    def __init__(self, *args, **kwargs):
-        from http.server import BaseHTTPRequestHandler
-        super().__init__(*args, **kwargs)
 
 def _handler_class():
     from http.server import BaseHTTPRequestHandler
-    from urllib.parse import urlparse
+    from urllib.parse import urlparse, parse_qs
 
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
             parsed = urlparse(self.path)
+            qs = parse_qs(parsed.query)
             path = parsed.path
+
+            # Token auth check (skip if no token is configured)
+            if DASHBOARD_TOKEN:
+                token = qs.get("token", [None])[0]
+                auth_header = self.headers.get("Authorization", "")
+                if token != DASHBOARD_TOKEN and auth_header != f"Bearer {DASHBOARD_TOKEN}":
+                    self.send_response(401)
+                    self.send_header("Content-Type", "text/plain")
+                    self.end_headers()
+                    self.wfile.write(b"Unauthorized. Pass ?token=... or Authorization: Bearer ...")
+                    return
 
             if path == "/api/status":
                 self.send_json(self._get_status())
@@ -198,7 +206,7 @@ def _handler_class():
             try:
                 out = subprocess.run(["pgrep", "-f", "sft.py|dpo.py"], capture_output=True, text=True, timeout=3)
                 running = bool(out.stdout.strip())
-            except:
+            except (subprocess.SubprocessError, FileNotFoundError):
                 pass
 
             return {
@@ -531,10 +539,17 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", type=int, default=8765)
     ap.add_argument("--host", default="0.0.0.0")
+    ap.add_argument("--token", default=None, help="Bearer token for auth (omit to disable auth)")
     args = ap.parse_args()
+
+    DASHBOARD_TOKEN = args.token
 
     Handler = _handler_class()
     server = HTTPServer((args.host, args.port), Handler)
     print(f"Cognitive Core Dashboard → http://{args.host}:{args.port}")
-    print(f"Open in browser to monitor training in real-time.")
+    if args.token:
+        print(f"Auth enabled. Use ?token={args.token} or Authorization: Bearer {args.token}")
+    else:
+        print("WARNING: No auth token set. Use --token to protect this dashboard.")
+    print("Open in browser to monitor training in real-time.")
     server.serve_forever()

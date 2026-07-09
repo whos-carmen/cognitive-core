@@ -14,6 +14,8 @@ DOCKER_CMD=(
     --gpus all
     --shm-size=16g
     -v "${REPO_ROOT}:/workspace"
+    -v "${REPO_ROOT}/models-cache:/workspace/models"
+    -v "${REPO_ROOT}/train:/workspace/train"
     -w /workspace
     cognitive-core:latest
 )

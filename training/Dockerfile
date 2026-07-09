@@ -1,10 +1,13 @@
-FROM ghcr.io/unslothai/unsloth:latest-cuda
+FROM ghcr.io/unslothai/unsloth:2025.6.1-cuda
 
 # Install as root for /opt/venv access
 USER root
 
-# Training dependencies not in the base image
-RUN uv pip install --system liger-kernel gguf 2>/dev/null || pip install --no-cache-dir liger-kernel gguf
+# Copy and install training dependencies
+COPY requirements.txt /tmp/requirements.txt
+RUN uv pip install --system -r /tmp/requirements.txt 2>/dev/null || \
+    pip install --no-cache-dir -r /tmp/requirements.txt && \
+    rm /tmp/requirements.txt
 
 # Switch back to non-root user
 USER unsloth

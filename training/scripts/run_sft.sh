@@ -20,9 +20,9 @@ DOCKER_CMD=(
 case "$MODE" in
   smoke)
     echo "=== SFT SMOKE TEST (5 steps, short sequences) ==="
-    "${DOCKER_CMD[@]}" python /workspace/models/code/train/sft.py \
+    "${DOCKER_CMD[@]}" python /workspace/code/train/sft.py \
       --model /workspace/models/merged \
-      --train_file /workspace/models/Luminia-MiniCPM5-1B-Agent-GGUF/dataset/train_v4.jsonl \
+      --train_file /workspace/dataset/train_v4.jsonl \
       --out /workspace/train/outputs/sft_smoke \
       --max_steps 5 \
       --bsz 1 \
@@ -33,34 +33,44 @@ case "$MODE" in
 
   full)
     echo "=== SFT FULL TRAINING (3 epochs, ~3-6h) ==="
-    "${DOCKER_CMD[@]}" python /workspace/models/code/train/sft.py \
+    "${DOCKER_CMD[@]}" python /workspace/code/train/sft.py \
       --model /workspace/models/merged \
-      --train_file /workspace/models/Luminia-MiniCPM5-1B-Agent-GGUF/dataset/train_v4.jsonl \
+      --train_file /workspace/dataset/train_v4.jsonl \
       --out /workspace/train/outputs/sft_claude_agent \
       --epochs 3 \
       --neftune 5 \
       --bsz 1 \
       --accum 24 \
       --lr 1e-5 \
+      --lr_scheduler cosine \
+      --warmup_ratio 0.05 \
+      --weight_decay 0.01 \
+      --max_grad_norm 1.0 \
       --max_len 24576 \
-      --train_cap 24576
+      --train_cap 24576 \
+      --seed 42
     ;;
 
   dpo)
     echo "=== DPO TRAINING (2-4h) ==="
-    "${DOCKER_CMD[@]}" python /workspace/models/code/train/dpo.py \
+    "${DOCKER_CMD[@]}" python /workspace/code/train/dpo.py \
       --model /workspace/train/outputs/sft_claude_agent \
-      --data /workspace/models/dataset/dpo_onpolicy_claude.jsonl \
+      --data /workspace/dataset/dpo_onpolicy_claude.jsonl \
       --out /workspace/train/outputs/final-cognitive-core \
       --beta 0.1 \
       --lr 1e-6 \
+      --lr_scheduler cosine \
+      --warmup_ratio 0.05 \
+      --weight_decay 0.01 \
+      --max_grad_norm 1.0 \
       --epochs 3 \
-      --accum 8
+      --accum 8 \
+      --seed 42
     ;;
 
   monitor)
     echo "=== TAILING SFT LOGS ==="
-    exec tail -f "${REPO_ROOT}/models/logs/sft.log"
+    exec tail -f "${REPO_ROOT}/train/logs/sft.log"
     ;;
 
   dashboard)

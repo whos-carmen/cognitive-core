@@ -36,7 +36,7 @@ def main():
                     metadata[k] = val.tolist()
                 else:
                     metadata[k] = val
-            except:
+            except (IndexError, AttributeError):
                 pass
 
     arch = metadata.get('general.architecture', 'llama')
@@ -73,9 +73,12 @@ def main():
         return name
 
     tensors = {}
+    unmapped_tensors = []
     print(f"\nExtracting {len(reader.tensors)} tensors...")
     for i, tensor in enumerate(reader.tensors):
         name = map_name(tensor.name)
+        if name == tensor.name and not name.startswith(('model.', 'lm_head')):
+            unmapped_tensors.append(tensor.name)
         # Convert to numpy array
         arr = tensor.data.astype(np.float16)
         tensors[name] = arr
@@ -83,6 +86,38 @@ def main():
             print(f"  [{i+1}/{len(reader.tensors)}] {name}: {arr.shape}")
 
     print(f"\nTotal tensors: {len(tensors)}")
+
+    # Validation: warn about unmapped tensors
+    if unmapped_tensors:
+        print(f"\n⚠️  WARNING: {len(unmapped_tensors)} tensors could not be mapped to HF names:")
+        for t in unmapped_tensors[:10]:
+            print(f"    - {t}")
+        if len(unmapped_tensors) > 10:
+            print(f"    ... and {len(unmapped_tensors) - 10} more")
+        print("  This may indicate an unsupported architecture. The converted model may be incomplete.")
+
+    # Validation: check for critical tensors
+    critical = ['model.embed_tokens.weight', 'model.norm.weight', 'lm_head.weight']
+    missing_critical = [t for t in critical if t not in tensors]
+    if missing_critical:
+        print(f"\n❌ ERROR: Missing critical tensors: {missing_critical}")
+        print("  The GGUF file may use a non-Llama architecture.")
+        print("  Check the GGUF metadata for 'general.architecture' and extend map_name() accordingly.")
+        sys.exit(1)
+
+    # Check layer completeness
+    num_layers = int(metadata.get(f'{arch}.block_count', 24))
+    layers_found = set()
+    for name in tensors:
+        if name.startswith('model.layers.'):
+            layer_idx = int(name.split('.')[2])
+            layers_found.add(layer_idx)
+    expected_layers = set(range(num_layers))
+    missing_layers = expected_layers - layers_found
+    if missing_layers:
+        print(f"\n⚠️  WARNING: Missing layers: {sorted(missing_layers)[:10]}...")
+    else:
+        print(f"✓ All {num_layers} layers found")
 
     # Save safetensors
     os.makedirs(args.output, exist_ok=True)

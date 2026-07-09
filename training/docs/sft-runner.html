@@ -114,17 +114,22 @@
 
   <h3 style="margin: 1rem 0 .5rem; font-size: .95rem;">Command to run inside container:</h3>
 
-  <pre>python models/code/train/sft.py \
+  <pre>python code/train/sft.py \
   --model /workspace/models/merged \
-  --train_file /workspace/models/Luminia-MiniCPM5-1B-Agent-GGUF/dataset/train_v4.jsonl \
+  --train_file /workspace/dataset/train_v4.jsonl \
   --out /workspace/train/outputs/sft_claude_agent \
   --epochs 3 \
   --neftune 5 \
   --bsz 1 \
   --accum 24 \
   --lr 1e-5 \
+  --lr_scheduler cosine \
+  --warmup_ratio 0.05 \
+  --weight_decay 0.01 \
+  --max_grad_norm 1.0 \
   --max_len 24576 \
-  --train_cap 24576</pre>
+  --train_cap 24576 \
+  --seed 42</pre>
 
   <h3 style="margin: 1rem 0 .5rem; font-size: .95rem;">Parameter Reference</h3>
   <div class="param-grid">
@@ -133,15 +138,19 @@
     <span class="key">--bsz 1</span><span>Microbatch size (1 per step, safe for VRAM)</span>
     <span class="key">--accum 24</span><span>Gradient accumulation steps (effective batch = 24)</span>
     <span class="key">--lr 1e-5</span><span>Learning rate (standard for full fine-tune)</span>
-    <span class="key">--max_len 24576</span><span>Max sequence length (<a href="#" style="color:#58a6ff;">~24K</a> tokens)</span>
+    <span class="key">--lr_scheduler cosine</span><span>Cosine LR schedule with 5% warmup for stable convergence</span>
+    <span class="key">--weight_decay 0.01</span><span>L2 regularization to prevent overfitting</span>
+    <span class="key">--max_grad_norm 1.0</span><span>Gradient clipping for training stability</span>
+    <span class="key">--seed 42</span><span>Fixed seed for reproducible training runs</span>
+    <span class="key">--max_len 24576</span><span>Max sequence length (~24K tokens)</span>
     <span class="key">--train_cap 24576</span><span>Drop examples longer than this</span>
   </div>
 
   <h3 style="margin: 1rem 0 .5rem; font-size: .95rem;">Smoke test (5 minutes, verifies everything works):</h3>
 
-  <pre>python models/code/train/sft.py \
+  <pre>python code/train/sft.py \
   --model /workspace/models/merged \
-  --train_file /workspace/models/Luminia-MiniCPM5-1B-Agent-GGUF/dataset/train_v4.jsonl \
+  --train_file /workspace/dataset/train_v4.jsonl \
   --out /workspace/train/outputs/sft_smoke \
   --max_steps 5 \
   --bsz 1 \
@@ -151,17 +160,17 @@
 
   <p style="margin-top: .75rem; color: #8b929a; font-size: .85rem;">
     💡 The smoke test runs 5 steps, trains on short examples only,
-    and dumps logs/metrics to <code>models/logs/sft_metrics.jsonl</code>.
+    and dumps logs/metrics to <code>train/logs/sft_metrics.jsonl</code>.
     If that works, kill it and launch the full 3-epoch run above.
   </p>
 </div>
 
 <div class="card">
   <h2>📈 Monitoring</h2>
-  <p>Training logs stream to <code>models/logs/sft.log</code> and metrics to <code>models/logs/sft_metrics.jsonl</code>.</p>
+  <p>Training logs stream to <code>train/logs/sft.log</code> and metrics to <code>train/logs/sft_metrics.jsonl</code>.</p>
 
   <p style="margin-top: .5rem;">Watch loss in real-time (from another terminal):</p>
-  <pre>tail -f /workspace/models/logs/sft.log</pre>
+  <pre>tail -f /workspace/train/logs/sft.log</pre>
 
   <p style="margin-top: .5rem;">Check GPU utilization:</p>
   <pre>watch -n 1 nvidia-smi</pre>
@@ -178,7 +187,7 @@
   <p style="margin-top: .75rem;">
     <a href="configs/merge.yaml" style="color:#58a6ff;">merge config</a> ·
     <a href="test_prompts.txt" style="color:#58a6ff;">test prompts</a> ·
-    <a href="models/code/train/sft.py" style="color:#58a6ff;">sft.py source</a>
+    <a href="code/train/sft.py" style="color:#58a6ff;">sft.py source</a>
   </p>
 </div>
 
@@ -188,20 +197,25 @@
   to reinforce tool-calling behavior over stalling:</p>
 
   <pre># 1. Generate on-policy preference pairs from SFT model
-python models/code/data/build_prefs_onpolicy_gpu.py \
+python code/data/build_prefs_onpolicy_gpu.py \
   --model /workspace/train/outputs/sft_claude_agent \
-  --src /workspace/models/Luminia-MiniCPM5-1B-Agent-GGUF/dataset/train_v4.jsonl \
-  --out /workspace/models/dataset/dpo_onpolicy_claude.jsonl
+  --src /workspace/dataset/train_v4.jsonl \
+  --out /workspace/dataset/dpo_onpolicy_claude.jsonl
 
 # 2. DPO training
-python models/code/train/dpo.py \
+python code/train/dpo.py \
   --model /workspace/train/outputs/sft_claude_agent \
-  --data /workspace/models/dataset/dpo_onpolicy_claude.jsonl \
+  --data /workspace/dataset/dpo_onpolicy_claude.jsonl \
   --out /workspace/train/outputs/final-cognitive-core \
   --beta 0.1 \
   --lr 1e-6 \
+  --lr_scheduler cosine \
+  --warmup_ratio 0.05 \
+  --weight_decay 0.01 \
+  --max_grad_norm 1.0 \
   --epochs 3 \
-  --accum 8</pre>
+  --accum 8 \
+  --seed 42</pre>
   <p style="color:#8b929a; font-size:.85rem; margin-top:.5rem;">
     ⏱ DPO takes ~2-4 hours. VRAM is tight (~22GB). If OOM, reduce <code>--accum</code> to 4.
   </p>

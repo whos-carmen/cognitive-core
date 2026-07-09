@@ -12,6 +12,7 @@ models:
 merge_method: ties
 base_model: /workspace/models/Luminia
 parameters:
+  density: 0.6
   normalize: true
   weight: 1.0
 dtype: bfloat16

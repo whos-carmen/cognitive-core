@@ -17,7 +17,7 @@
        --image-id ami-xxx \
        --key-name your-key \
        --security-group-ids sg-xxx \
-       --block-device-mappings '[{"DeviceName":"/dev/sda1","Ebs":{"VolumeSize":50,"VolumeType":"gp3"}}]'
+       --block-device-mappings '[{"DeviceName":"/dev/sda1","Ebs":{"VolumeSize":100,"VolumeType":"gp3"}}]'
    ```
 
 2. SSH in
@@ -89,6 +89,36 @@
 
 ---
 
+## Phase 1.5: Baseline Evaluation
+
+**Goal**: Measure the merged model's routing quality *before* SFT to establish a baseline.
+
+### Steps
+
+1. Launch the model on an OpenAI-compatible server (e.g. llama.cpp or SGLang)
+   ```
+   # In the container or on the host
+   llama-server -m /workspace/models/merged/gguf-file.gguf --port 8080
+   ```
+
+2. Run the evaluation suite against the merged model
+   ```
+   python eval/run_eval.py \
+       --model merged \
+       --base-url http://localhost:8080/v1
+   ```
+
+3. Save the results as baseline
+   ```
+   cp eval/results/summary_*.json eval/results/baseline_merged.json
+   ```
+
+4. Note per-category scores — these are what SFT/DPO must improve on
+
+**Time**: ~30 min.
+
+---
+
 ## Phase 2: SFT Training
 
 **Goal**: Fine-tune the merged model on 45K tool-calling examples (3 epochs).
@@ -105,6 +135,11 @@ The g7e.2xlarge GPU is an **NVIDIA RTX PRO 6000 Blackwell Server Edition (96 GB 
 | max sequence length | 24576 | Uses full 24K context |
 | precision | BF16 | Standard for 1B models |
 | epochs | 3 | Start here for convergence |
+| LR scheduler | cosine | Stable convergence with warmup |
+| warmup ratio | 5% | Prevents early instability |
+| weight decay | 0.01 | L2 regularization |
+| max grad norm | 1.0 | Gradient clipping for stability |
+| seed | 42 | Reproducibility |
 
 ### Steps
 
@@ -155,8 +190,13 @@ The g7e.2xlarge GPU is an **NVIDIA RTX PRO 6000 Blackwell Server Edition (96 GB 
        --bsz 1 \
        --accum 24 \
        --lr 1e-5 \
+       --lr_scheduler cosine \
+       --warmup_ratio 0.05 \
+       --weight_decay 0.01 \
+       --max_grad_norm 1.0 \
        --max_len 24576 \
        --train_cap 24576 \
+       --seed 42 \
        --grad_ckpt
    ```
 
@@ -165,10 +205,10 @@ The g7e.2xlarge GPU is an **NVIDIA RTX PRO 6000 Blackwell Server Edition (96 GB 
    - Auto-resume from the latest checkpoint in `/workspace/train/outputs/sft_claude_agent/`
    - Continue from where it left off
 
-5. On host (separate terminal), launch dashboard
+5. On host (separate terminal), launch dashboard (with auth)
    ```
-   python3 scripts/dashboard.py --port 8765 --host 0.0.0.0
-   # Open http://<instance-ip>:8765
+   python3 scripts/dashboard.py --port 8765 --host 0.0.0.0 --token YOUR_SECRET
+   # Open http://<instance-ip>:8765?token=YOUR_SECRET
    ```
 
 6. Monitor training loss curve and GPU utilization
@@ -211,8 +251,13 @@ The g7e.2xlarge GPU is an **NVIDIA RTX PRO 6000 Blackwell Server Edition (96 GB 
        --out /workspace/train/outputs/final-cognitive-core \
        --beta 0.1 \
        --lr 1e-6 \
+       --lr_scheduler cosine \
+       --warmup_ratio 0.05 \
+       --weight_decay 0.01 \
+       --max_grad_norm 1.0 \
        --epochs 3 \
-       --accum 8
+       --accum 8 \
+       --seed 42
    ```
 
 3. Monitor dashboard for DPO metrics (loss, accuracy, reward)
@@ -347,7 +392,9 @@ The g7e.2xlarge GPU is an **NVIDIA RTX PRO 6000 Blackwell Server Edition (96 GB 
        --model /workspace/models/merged \
        --train_file code/dataset/train_v4_tokenized \
        --out /workspace/train/outputs/sft_v2 \
-       --epochs 1 --bsz 1 --accum 24 --lr 1e-5
+       --epochs 1 --bsz 1 --accum 24 --lr 1e-5 \
+       --lr_scheduler cosine --warmup_ratio 0.05 \
+       --weight_decay 0.01 --max_grad_norm 1.0 --seed 42
    ```
 
 5. Re-run DPO
@@ -360,7 +407,9 @@ The g7e.2xlarge GPU is an **NVIDIA RTX PRO 6000 Blackwell Server Edition (96 GB 
        --model /workspace/train/outputs/sft_v2 \
        --data code/dataset/dpo_v2.jsonl \
        --out /workspace/train/outputs/cognitive-core-v2 \
-       --beta 0.1 --lr 1e-6 --epochs 3 --accum 8
+       --beta 0.1 --lr 1e-6 --epochs 3 --accum 8 \
+       --lr_scheduler cosine --warmup_ratio 0.05 \
+       --weight_decay 0.01 --max_grad_norm 1.0 --seed 42
    ```
 
 6. Re-upload to HF
@@ -426,15 +475,16 @@ The g7e.2xlarge GPU is an **NVIDIA RTX PRO 6000 Blackwell Server Edition (96 GB 
 ## Summary Timeline
 
 ```
-Phase 0: Setup        30 min     (once)
-Phase 1: Merge         5 min     (once)
-Phase 2: SFT         6-12 hr    (3 epochs, per iteration)
-Phase 3: DPO         2-4 hr     (per iteration)
-Phase 4: Upload       15 min     (per iteration)
-Phase 5: Eval         30 min     (per iteration)
-Phase 6: Iterate    5-10 hr     (per iteration, optional)
-Phase 7: Cost Opt     1 hr       (one-time automation)
+Phase 0: Setup             30 min     (once)
+Phase 1: Merge              5 min     (once)
+Phase 1.5: Baseline Eval   30 min     (once)
+Phase 2: SFT             6-12 hr     (3 epochs, per iteration)
+Phase 3: DPO             2-4 hr      (per iteration)
+Phase 4: Upload           15 min     (per iteration)
+Phase 5: Eval             30 min     (per iteration)
+Phase 6: Iterate        5-10 hr      (per iteration, optional)
+Phase 7: Cost Opt         1 hr       (one-time automation)
 ```
 
-First full run (Phases 0-5): ~9-17 hr.
+First full run (Phases 0-5): ~10-18 hr.
 Each iteration (Phases 2-6 on spot): ~5-10 hr at ~$1-2/hr.

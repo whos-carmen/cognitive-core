@@ -73,7 +73,7 @@ def call_api(model: str, prompt: str, system: str, base_url: str) -> str:
             {"role": "system", "content": system},
             {"role": "user", "content": prompt},
         ],
-        "temperature": 0.7,
+        "temperature": 0.0,
     }
     if HTTPX:
         r = httpx.post(url, json=payload, timeout=120)
@@ -100,6 +100,10 @@ def classify_response(response: str, expected_action: str) -> dict:
         "i don't have access", "i can't look up", "i would need to check",
         "let me check", "i don't have real-time", "i don't have current",
         "this requires looking up", "i'd need to check",
+        "i need to look that up", "let me look that up",
+        "i should search for", "i'll look up", "let me find that out",
+        "i don't have the latest", "i'd have to look that up",
+        "this needs to be looked up", "i'll need to search for that",
     ]
     has_delegation = any(phrase in resp_lower for phrase in delegation_phrases)
 
@@ -112,6 +116,10 @@ def classify_response(response: str, expected_action: str) -> dict:
         "i can't determine", "i cannot determine",
         "it's not possible to know", "this information isn't",
         "i shouldn't fabricate", "i won't guess",
+        "i'm not confident", "i have no way of knowing",
+        "i cannot verify", "this is beyond my knowledge",
+        "i have no information", "i'd be guessing",
+        "i shouldn't speculate", "i cannot confirm",
     ]
     has_abstention = any(phrase in resp_lower for phrase in abstention_phrases)
 
@@ -195,7 +203,7 @@ def run_evaluation(args):
 
         result = {
             **entry,
-            "response": response[:500],  # truncate for storage
+            "response": response[:4000],  # truncate for storage (keep enough for tool call detection)
             "classification": classification,
             "timestamp": datetime.now().isoformat(),
         }
@@ -239,6 +247,18 @@ def run_evaluation(args):
             acc = s["correct"] / s["total"] * 100
             print(f"    {cat}: {label:<35} {s['correct']}/{s['total']} ({acc:.1f}%)")
 
+    # Hallucination detection: model gave a confident wrong answer
+    # Cases where expected was abstain/delegate but model confidently answered
+    hallucinations = sum(
+        1 for r in results
+        if r.get("expected_action") in ("abstain", "delegate")
+        and r["classification"]["detected"] == "answer"
+    )
+    hallucination_rate = round(hallucinations / stats["total"] * 100, 1) if stats["total"] > 0 else 0
+    print(f"\n  Hallucination Rate: {hallucinations}/{stats['total']} ({hallucination_rate}%)")
+    if hallucination_rate > 5:
+        print(f"    ⚠️  EXCEEDS 5% TARGET")
+
     # Save summary
     summary = {
         "timestamp": timestamp,
@@ -246,6 +266,8 @@ def run_evaluation(args):
         "base_url": args.base_url,
         "stats": stats,
         "accuracy": round(stats["correct"] / stats["total"] * 100, 1) if stats["total"] > 0 else 0,
+        "hallucination_rate": hallucination_rate,
+        "hallucinations": hallucinations,
     }
     summary_file = os.path.join(RESULTS_DIR, f"summary_{timestamp}.json")
     with open(summary_file, "w") as f:
@@ -278,8 +300,20 @@ def generate_report(results_file: str):
             stats["correct"] += 1
             stats["by_category"][cat]["correct"] += 1
 
+    # Hallucination detection: model gave a confident wrong answer
+    # Cases where expected was abstain/delegate but model confidently answered
+    hallucinations = 0
+    for r in results:
+        expected = r.get("expected_action", "")
+        detected = r["classification"]["detected"]
+        # Hallucination = model answered confidently when it should have abstained/delegated
+        if expected in ("abstain", "delegate") and detected == "answer":
+            hallucinations += 1
+    hallucination_rate = round(hallucinations / stats["total"] * 100, 1) if stats["total"] > 0 else 0
+
     print(f"  Total: {stats['total']}")
     print(f"  Overall: {stats['correct']}/{stats['total']} ({stats['correct']/stats['total']*100:.1f}%)")
+    print(f"  Hallucination Rate: {hallucinations}/{stats['total']} ({hallucination_rate}%)")
     for cat in ["A", "B", "C", "D", "E"]:
         s = stats["by_category"][cat]
         if s["total"] > 0:
