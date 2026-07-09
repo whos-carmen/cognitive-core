@@ -305,13 +305,12 @@ All on the 7900 XTX machine. The remote client just needs a browser or terminal.
 
 ## VRAM Budget (Updated)
 
-| Component | VRAM | Notes |
+| Component | VRAM | Where |
 |---|---|---|
-| MiniCPM5-1B Q8_0 (router) | ~1.1 GB | Always loaded |
-| RAG model 7-8B Q4_K_M | ~5.5 GB | On demand |
-| KV cache (32K × 2) | ~2-3 GB | Shared |
-| Runtime Dashboard | ~0 GB (CPU) | No GPU needed |
-| Mem0 / Chroma | ~0 GB (CPU) | No GPU needed |
+| MiniCPM5-1B Q8_0 (router) | ~1.1 GB | GPU (always loaded) |
+| Llama-3.1-8B Q4_K_M (RAG) | ~5.5 GB | GPU (on demand) |
+| Granite embedding 149M | ~0.3 GB | GPU or CPU (17 GB free either way) |
+| KV cache (32K × 2) | ~2-3 GB | GPU (shared) |
+| Runtime Dashboard | ~0 GB | CPU (no GPU needed) |
+| Chroma DB | ~0 GB | CPU (no GPU needed) |
 | **Total** | **~9 GB** | **15 GB free** |
-
-The 7900 XTX has plenty of headroom for all of this simultaneously.

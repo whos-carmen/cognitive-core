@@ -110,14 +110,50 @@ All three fit alongside MiniCPM5 with room for KV cache.
 An embedding model converts text to vectors (lists of numbers) that represent
 meaning. The vector DB uses these to find "the chunk most relevant to the question."
 
-Key facts:
-- Tiny: BGE-small-en-v1.5 is ~0.1 GB
-- Runs on CPU, ~50ms per query
-- Doesn't need a GPU
-- You don't choose this based on quality — all popular ones work well for RAG
+Recommended: **IBM Granite-embedding-english-r2**.
 
-Top pick: **BGE-small-en-v1.5** — fast, good quality, runs on CPU.
-Alternative: **GTE-small** — slightly better but larger.
+| Property | Value |
+|---|---|
+| Parameters | 149M |
+| Embedding size | 768 |
+| Context length | **8192 tokens** — can embed full document sections in one pass |
+| Size on disk | ~0.3 GB |
+| Speed (GPU) | 144 docs/sec (on H100), near-instant at 1B scale |
+| Speed (CPU) | ~50-100ms per query |
+| License | Apache 2.0 |
+| Architecture | ModernBERT (bi-encoder) |
+
+Benchmarks vs common alternatives:
+
+| Model | Average | BEIR Retrieval | CoIR (Code) | MLDR (Long) | MTRAG (Conv) |
+|---|---|---|---|---|---|
+| BGE-base-en-v1.5 | 46.9 | 54.8 | 46.6 | 33.5 | 38.8 |
+| GTE-base-en-v1.5 | 52.8 | 55.5 | 42.4 | 42.7 | 36.0 |
+| **Granite-embedding-english-r2** | **59.5** | 56.4 | 54.8 | 41.6 | 57.6 |
+
+### GPU vs CPU
+
+At only 0.3 GB, Granite fits easily on GPU alongside both models:
+
+| Component | VRAM |
+|---|---|
+| MiniCPM5-1B Q8_0 (router) | ~1.1 GB |
+| Llama-3.1-8B Q4_K_M (RAG) | ~5.5 GB |
+| Granite embedding 149M | ~0.3 GB |
+| KV cache | ~2-3 GB |
+| **Total** | **~9 GB** — **15 GB free** on 7900 XTX |
+
+Use it via sentence-transformers:
+
+```python
+from sentence_transformers import SentenceTransformer
+
+model = SentenceTransformer("ibm-granite/granite-embedding-english-r2")
+
+# Encode queries and documents
+texts = ["What is OPD?", "On-Policy Distillation is..."]
+embeddings = model.encode(texts, normalize_embeddings=True)
+```
 
 ---
 
@@ -220,7 +256,7 @@ INGESTION (one-time per document set)
 3. Chunk into segments (~512 tokens each)
    └── Overlap chunks by ~50 tokens for context continuity
 
-4. Embed each chunk (BGE-small, CPU)
+4. Embed each chunk (Granite-embedding-english-r2, GPU or CPU)
    └── Store in vector DB with original text + metadata
 
 
@@ -234,7 +270,7 @@ QUERY (per user question)
    └── Knowledge question → RAG pipeline:
 
 3. RAG pipeline:
-   ├── Embed query (BGE-small, CPU, ~50ms)
+   ├── Embed query (Granite-embedding-english-r2, GPU or CPU, ~50ms)
    ├── Search vector DB → top 3-5 chunks
    ├── Build prompt:
    │   "Answer based on the following context:
@@ -256,6 +292,7 @@ QUERY (per user question)
 |---|---|---|
 | MiniCPM5-1B Q8_0 | ~1.1 GB | Always loaded (router) |
 | RAG model (7-8B) Q4_K_M | ~5.5 GB | Loaded on demand |
+| Granite embedding 149M | ~0.3 GB | GPU or CPU — 17 GB free either way |
 | KV cache (32K context × 2) | ~2-3 GB | Shared between models |
 | **Total running** | **~9 GB** | |
 | **Free** | **~15 GB** | For other tasks |

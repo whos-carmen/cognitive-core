@@ -56,7 +56,7 @@ Web pages, PDFs, docs
   Clean markdown text
          │
          ▼
-  Chunk → Embed (BGE-small, CPU) → Store in Chroma
+  Chunk → Embed (Granite-embedding-english-r2, GPU or CPU) → Store in Chroma
 ```
 
 Firecrawl handles JavaScript rendering and extracts the main content from
