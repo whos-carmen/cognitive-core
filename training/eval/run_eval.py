@@ -34,7 +34,7 @@ except ImportError:
     import urllib.error
     HTTPX = False
 
-PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # training/
 DATASET = os.path.join(PROJ, "eval", "dataset.jsonl")
 RESULTS_DIR = os.path.join(PROJ, "eval", "results")
 
