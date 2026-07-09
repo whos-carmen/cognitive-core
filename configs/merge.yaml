@@ -1,0 +1,17 @@
+# TIES Merge Config — GnLOLot + Luminia
+# Run: mergekit-yaml merge.yaml /workspace/models/merged --cuda
+
+models:
+  - model: /workspace/models/GnLOLot-MiniCPM5-1B-Claude-Opus-Fable5-Thinking
+    parameters:
+      weight: 0.55
+  - model: /workspace/models/Luminia-MiniCPM5-1B-Agent-HF
+    parameters:
+      weight: 0.45
+
+merge_method: ties
+base_model: /workspace/models/Luminia-MiniCPM5-1B-Agent-HF
+parameters:
+  normalize: true
+  weight: 1.0
+dtype: bfloat16

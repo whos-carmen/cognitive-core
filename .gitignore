@@ -1,0 +1,18 @@
+# Model weights and downloaded model repos
+models/
+
+# Training outputs (regenerated)
+train/
+logs/
+*.log
+*.jsonl
+
+# HF cache
+.cache/
+
+# Docker
+.cached/
+
+# Sensitive keys
+*.pem
+*.key

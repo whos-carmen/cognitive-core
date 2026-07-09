@@ -204,80 +204,62 @@ At 1B scale, Q8_0 is both smaller AND faster than F16 (memory-bandwidth bound). 
 
 ## 5. Target Hardware
 
-### Server Specs
+### Training Hardware (Lambda Labs)
+- **GPU**: 1x NVIDIA H100 PCIe (80 GB VRAM)
+- **CPU**: 26 vCPUs
+- **RAM**: 200 GB
+- **Storage**: 1 TB NVMe
+- **Cost**: $3.29/hr
+- **OS**: Ubuntu 24.04
+
+### Local Dev Machine Specs
 - **CPU**: AMD Ryzen 9 7900X (12 cores / 24 threads)
 - **GPU**: AMD Radeon RX 7900 XTX (24GB VRAM, RDNA 3 / gfx1100)
-- **Host OS**: ESXi 8.0
-- **ML VM**: Ubuntu 26.04 LTS with GPU passthrough (VMDirectPath I/O)
+- **OS**: Ubuntu (bare metal)
 
 ### VRAM Budget
 
-| Task | VRAM Needed | 7900 XTX (24GB) |
-|---|---|---|
-| Mergekit merge | ~8 GB | ✅ Easy |
-| SFT (full, 1B model) | ~10-14 GB | ✅ Fits |
-| SFT (4-bit LoRA) | ~4-6 GB | ✅ Easy |
-| DPO (full fine-tune) | ~18-22 GB | ✅ Tight but fits |
-| GGUF conversion | ~4 GB | ✅ Easy |
-
-### VM Allocation (64GB host, unlicensed ESXi)
-
-| Consumer | Allocation | Notes |
-|---|---|---|
-| ESXi host | 4-8 GB | Hypervisor overhead |
-| Windows Server VM | 16-24 GB | Other workloads |
-| Ubuntu ML VM | **40 GB** (reserved) | Training + model loading + OS |
-| Buffer | ~4 GB | Headroom |
-
-8 vCPU limit per VM (unlicensed ESXi) — sufficient since GPU training is not CPU-bound.
-
-### Why ESXi VM + GPU Passthrough (Not WSL2)
-
-Windows Containers do NOT support GPU passthrough for ML training. While WSL2 on Windows works, a native Ubuntu 26.04 VM on ESXi 8.0 is strictly better:
-
-| | WSL2 on Windows | ESXi VM |
-|---|---|---|
-| GPU access | Indirect (WSL2 + D3D12) | Direct passthrough (native ROCm) |
-| ROCm support | Limited, unofficial | Full, official packages |
-| Stability | Occasional WSL2 quirks | Stable, production-grade |
-| Resource control | Shares Windows resources | Dedicated CPU/RAM/disk |
-| Isolation | None — shares Windows kernel | Full VM isolation |
-| Recommended for | Quick dev/testing | **Serious training workloads** |
-
-Ubuntu 26.04 LTS ships ROCm in the standard package repos (tested on 7900 XTX), so no manual driver installation is needed beyond the standard apt packages.
+| Task | VRAM Needed | H100 (80GB) | 7900 XTX (24GB) |
+|---|---|---|---|
+| GGUF→HF conversion | ~4 GB | ✅ Easy | ✅ Easy |
+| TIES merge | ~8 GB | ✅ Easy | ✅ Easy |
+| SFT (full, 1B model) | ~10-14 GB | ✅ Easy | ✅ Fits |
+| SFT (batch 4, no grad-ckpt) | ~30 GB | ✅ Easy | ❌ Too big |
+| DPO (full fine-tune) | ~18-22 GB | ✅ Easy | ✅ Tight but fits |
+| GGUF conversion | ~4 GB | ✅ Easy | ✅ Easy |
 
 ---
 
 ## 6. Environment Setup
 
-> **Full step-by-step guide**: [docs/ESXi-Ubuntu-Setup.md](docs/ESXi-Ubuntu-Setup.md)
+### Lambda Labs Cloud Setup (current training)
 
-### Quick Summary
+1. Create account at lambdalabs.com, add SSH key
+2. Launch instance:
+   ```bash
+   # Via API
+   curl -X POST -H "Authorization: Bearer $LAMBDA_AI_API_KEY" \
+     -H "Content-Type: application/json" \
+     -d '{"region_name":"us-west-3","instance_type_name":"gpu_1x_h100_pcie",
+          "ssh_key_names":["cognitive-core"],"quantity":1}' \
+     https://cloud.lambdalabs.com/api/v1/instance-operations/launch
+   ```
+3. SSH in: `ssh -i ~/.ssh/lambda_ai ubuntu@<ip>`
+4. Set up tools:
+   ```bash
+   curl -LsSf https://astral.sh/uv/install.sh | sh
+   uv venv ~/venv
+   ln -sf ~/venv ~/.venv  # so uv run auto-discovers it
+   uv pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu126
+   uv pip install transformers datasets accelerate bitsandbytes liger-kernel trl huggingface-hub mergekit gguf
+   ```
 
-1. **BIOS**: Enable SVM + IOMMU
-2. **ESXi**: Enable passthrough for the 7900 XTX PCI devices, reboot host
-3. **Create VM**: Ubuntu 26.04, 8 vCPU (unlicensed ESXi limit), 40GB RAM (all reserved), 200-300GB disk, GPU passed through
-4. **Install ROCm**: `sudo apt install -y rocm-dev rocm-hip-sdk`
-5. **Set GPU arch**: `export HSA_OVERRIDE_GFX_VERSION=11.0.0`
-6. **Docker**: Install Docker, pull `goldengrapegentleman/unsloth-rocm:2026.1.4-rocm7.1-gfx1100`
-7. **Verify**: `python -c "import torch; print(torch.cuda.get_device_name(0))"` → `AMD Radeon RX 7900 XTX`
+### Local Development (ROCm, bare metal)
 
-### Launch Training Container
-
-```bash
-docker run -it \
-    --device=/dev/kfd \
-    --device=/dev/dri \
-    --group-add video \
-    --group-add render \
-    --shm-size=16g \
-    -v /home/$USER/cognitive-core:/workspace \
-    -e HSA_OVERRIDE_GFX_VERSION=11.0.0 \
-    goldengrapegentleman/unsloth-rocm:2026.1.4-rocm7.1-gfx1100 \
-    bash
-```
-
-> See [docs/ESXi-Ubuntu-Setup.md](docs/ESXi-Ubuntu-Setup.md) for full setup with troubleshooting.
+1. **Install ROCm**: `sudo apt install -y rocm-dev rocm-hip-sdk`
+2. **Set GPU arch**: `export HSA_OVERRIDE_GFX_VERSION=11.0.0`
+3. **Build Docker image**: `docker build -t cognitive-core:latest .`
+4. **Run container**: `bash scripts/launch_container.sh`
 
 ---
 
@@ -295,104 +277,86 @@ Base (openbmb/MiniCPM5-1B)
 
 This preserves Claude's thinking patterns while adding aggressive tool-calling behavior.
 
-### Stage 0: Download Models and Training Data
+### Pipeline Overview
+
+```
+Stage 0: Download models (GnLOLot HF, Luminia GGUF)                          ✅ Done
+Stage 1: Convert Luminia GGUF → HF safetensors                               ✅ Done
+Stage 2: TIES merge (GnLOLot + Luminia HF) → merged checkpoint                ✅ Done
+Stage 3: SFT — teach tool calling (3 epochs, H100-optimized)                  🟡 Running
+Stage 4: DPO — reinforce acting over stalling                                 ⬜ Next
+Stage 5: GGUF conversion for deployment                                       ⬜ Final
+```
+
+### Stage 0: Download Models and Training Data ✅
 
 ```bash
 cd /workspace
 
-# Clone Luminia's training recipe (includes code + data schemas)
-git clone https://huggingface.co/Luminia/MiniCPM5-1B-Agent-GGUF
-cd MiniCPM5-1B-Agent-GGUF
-
-# Clone the GnLOLot checkpoint (HF weights, NOT the GGUF files)
-git lfs install
-git clone https://huggingface.co/GnLOLot/MiniCPM5-1B-Claude-Opus-Fable5-Thinking
+# Models (already downloaded)
+ls models/Luminia-MiniCPM5-1B-Agent-GGUF/   # GGUF files + training code + data
+ls models/GnLOLot-MiniCPM5-1B-Claude-Opus-Fable5-Thinking/  # HF safetensors
+ls models/openbmb-MiniCPM5-1B/               # Base model (HF)
 ```
 
-### Stage 1: Mergekit Test (5 min, no training)
+### Stage 1: Convert Luminia GGUF → HF Safetensors ✅
 
-A fast sanity check to see if combining the models via weight blending produces acceptable results. This requires no training, just weight-space math.
+```bash
+python scripts/gguf_to_hf.py \
+    models/Luminia-MiniCPM5-1B-Agent-GGUF/MiniCPM5-1B-Agent-v4-f16.gguf \
+    models/Luminia-MiniCPM5-1B-Agent-HF
+```
+
+### Stage 2: TIES Merge (GnLOLot + Luminia HF)
 
 ```bash
 pip install mergekit
 
 cat > /workspace/merge_test.yaml << 'EOF'
 models:
-  - model: /workspace/MiniCPM5-1B-Claude-Opus-Fable5-Thinking
+  - model: /workspace/models/GnLOLot-MiniCPM5-1B-Claude-Opus-Fable5-Thinking
     parameters:
       weight: 0.55
-  - model: /workspace/MiniCPM5-1B-Agent
+  - model: /workspace/models/Luminia-MiniCPM5-1B-Agent-HF
     parameters:
       weight: 0.45
 merge_method: ties
-base_model: /workspace/MiniCPM5-1B-Agent
+base_model: /workspace/models/Luminia-MiniCPM5-1B-Agent-HF
 parameters:
   normalize: true
   weight: 1.0
 dtype: bfloat16
 EOF
 
-mergekit-yaml /workspace/merge_test.yaml /workspace/merged-test --cuda
+mergekit-yaml /workspace/merge_test.yaml /workspace/models/merged --cuda
 ```
 
 **Why TIES over SLERP**: TIES identifies which parameters each model changed differently from the base and preserves only meaningful divergences. Better for models with distinct capabilities (reasoning vs tool calling) than simple interpolation.
 
 **Why weight 0.55/0.45 favoring GnLOLot**: We want to preserve Claude's reasoning patterns as the foundation and layer tool-calling behavior on top. Luminia's base (abliterrated) also strips refusals, which we want but don't need to weight as heavily.
 
-Test the merge immediately before committing to training:
-```bash
-# Quick test before converting
-python /workspace/MiniCPM5-1B-Agent-GGUF/llama.cpp/convert_hf_to_gguf.py \
-    /workspace/merged-test \
-    --outfile /workspace/merged-test-f16.gguf --outtype f16
-```
+### Stage 3: SFT — Teach Tool Calling (H100 Optimized)
 
-Run test prompts:
-```bash
-./llama-cli -m /workspace/merged-test-f16.gguf -t 8 \
-    -p "What is the capital of France? Now search for today's weather in Tokyo and calculate 15 factorial divided by 7 factorial times 8 factorial." \
-    -n 512
-```
-
-Evaluation criteria:
-1. **Confident knowledge** ("capital of France") → answers directly
-2. **Uncertain knowledge** ("weather in Tokyo") → attempts tool call or says it needs to look it up
-3. **Reasoning** (combinatorics calculation) → uses `<think>` and gets the right answer
-4. **Format** → emits structured tool calls, not prose about tool calls
-
-If the merge looks promising, proceed to training. If not, the merge confirms the models' strengths are too orthogonal for simple blending — training is the path.
-
-### Stage 2: SFT — Teach Tool Calling to the Claude Reasoning Model
-
-Generate Luminia's curated training data and train the GnLOLot model on it:
+Training on Lambda Labs 1x H100 PCIe with 80GB VRAM:
 
 ```bash
-cd /workspace/MiniCPM5-1B-Agent-GGUF
+# Smoke test (5 steps)
+bash run_training.sh smoke-h100
 
-# Build the v4 training data (45,762 curated rows from 26 sources)
-python code/data/build_v4.py
-
-# SFT — full fine-tune GnLOLot on the tool-calling data
-# This teaches Claude's reasoning model to also handle tool-calling format
-python code/train/sft.py \
-    --model /workspace/MiniCPM5-1B-Claude-Opus-Fable5-Thinking \
-    --train_file dataset/train_v4.jsonl \
-    --out /workspace/sft_claude_agent \
-    --epochs 1 \
-    --bsz 1 \
-    --accum 24 \
-    --lr 1e-5 \
-    --max_len 24576 \
-    --train_cap 24576
+# Full 3-epoch SFT (~2-3 hours)
+bash run_training.sh full-h100
 ```
 
-**What this does**: Takes the GnLOLot checkpoint (which has Claude's reasoning patterns) and trains it on Luminia's curated tool-calling data. The model learns to emit structured `<function>` tool calls while retaining its thinking capabilities.
+**H100-optimized settings** (`--bsz 4 --accum 6 --no-grad-ckpt --optim adamw`):
+- Batch size 4 (vs 1 on 24GB cards) — 4x tokens per step
+- Gradient checkpointing disabled — ~2-3x faster forward/backward
+- Full AdamW (not 8-bit) — better convergence
+- Effective batch: 24 (4 × 6)
+- Expected: **~12-15 it/s**, 3 epochs in ~2-3 hours
 
-**Expected time**: 1-2 hours on 7900 XTX.
+**What this does**: Takes the merged checkpoint (Claude reasoning + Luminia tool-calling patterns) and trains it on Luminia's curated tool-calling data. The model learns to emit structured `<function>` tool calls while retaining its thinking capabilities.
 
-**VRAM**: ~10-14 GB (comfortable).
-
-### Stage 3: DPO — Reinforce Acting Over Stalling
+### Stage 4: DPO — Reinforce Acting Over Stalling
 
 Generate on-policy preference pairs from the SFT model, then train DPO:
 
@@ -401,16 +365,16 @@ Generate on-policy preference pairs from the SFT model, then train DPO:
 # The SFT model generates its own responses to training prompts
 # Chosen = valid <function> tool call (correct format)
 # Rejected = rambles in <think> or answers in prose without tool call
-python code/data/build_prefs_onpolicy_gpu.py \
-    --model /workspace/sft_claude_agent \
-    --src dataset/train_v4.jsonl \
-    --out dataset/dpo_onpolicy_claude.jsonl
+python models/code/data/build_prefs_onpolicy_gpu.py \
+    --model /workspace/train/outputs/sft_claude_agent \
+    --src /workspace/models/Luminia-MiniCPM5-1B-Agent-GGUF/dataset/train_v4.jsonl \
+    --out /workspace/models/dataset/dpo_onpolicy_claude.jsonl
 
 # DPO training
-python code/train/dpo.py \
-    --model /workspace/sft_claude_agent \
-    --data dataset/dpo_onpolicy_claude.jsonl \
-    --out /workspace/final-cognitive-core \
+python models/code/train/dpo.py \
+    --model /workspace/train/outputs/sft_claude_agent \
+    --data /workspace/models/dataset/dpo_onpolicy_claude.jsonl \
+    --out /workspace/train/outputs/final-cognitive-core \
     --beta 0.1 \
     --lr 1e-6 \
     --epochs 3 \
@@ -439,14 +403,14 @@ cd /workspace
 git clone https://github.com/ggerganov/llama.cpp
 
 # Convert to F16 (the base for quantization)
-python llama.cpp/convert_hf_to_gguf.py /workspace/final-cognitive-core \
-    --outfile /workspace/final-cognitive-core-f16.gguf --outtype f16
+python llama.cpp/convert_hf_to_gguf.py /workspace/train/outputs/final-cognitive-core \
+    --outfile /workspace/train/outputs/final-cognitive-core-f16.gguf --outtype f16
 
 # Quantize to all useful formats
 cd llama.cpp
-./llama-quantize ../final-cognitive-core-f16.gguf ../final-cognitive-core-Q8_0.gguf Q8_0
-./llama-quantize ../final-cognitive-core-f16.gguf ../final-cognitive-core-Q6_K.gguf Q6_K
-./llama-quantize ../final-cognitive-core-f16.gguf ../final-cognitive-core-Q4_K_M.gguf Q4_K_M
+./llama-quantize ../train/outputs/final-cognitive-core-f16.gguf ../train/outputs/final-cognitive-core-Q8_0.gguf Q8_0
+./llama-quantize ../train/outputs/final-cognitive-core-f16.gguf ../train/outputs/final-cognitive-core-Q6_K.gguf Q6_K
+./llama-quantize ../train/outputs/final-cognitive-core-f16.gguf ../train/outputs/final-cognitive-core-Q4_K_M.gguf Q4_K_M
 ```
 
 ### Files produced

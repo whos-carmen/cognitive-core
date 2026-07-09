@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cognitive Core — SFT Runner</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    background: #0f1117; color: #e1e4eb; line-height: 1.6;
+    padding: 2rem;
+    max-width: 800px; margin: 0 auto;
+  }
+  h1 { font-size: 1.5rem; margin-bottom: .25rem; }
+  .subtitle { color: #8b929a; margin-bottom: 1.5rem; font-size: .9rem; }
+  .card {
+    background: #1a1d27; border: 1px solid #2a2e3a; border-radius: 8px;
+    padding: 1.25rem; margin-bottom: 1rem;
+  }
+  .card h2 { font-size: 1.1rem; margin-bottom: .75rem; color: #c9d1d9; }
+  .card h2 .badge {
+    display: inline-block; font-size: .7rem; padding: 1px 8px;
+    border-radius: 10px; margin-left: .5rem; vertical-align: middle;
+  }
+  .badge.done { background: #1a4731; color: #7ee787; }
+  .badge.next { background: #3b2e00; color: #d29922; }
+  .badge.run { background: #1f3a57; color: #58a6ff; }
+  .badge.future { background: #2a2e3a; color: #8b929a; }
+  code {
+    background: #0d1117; padding: 2px 6px; border-radius: 4px;
+    font-size: .85rem; color: #c9d1d9;
+  }
+  pre {
+    background: #0d1117; border: 1px solid #2a2e3a; border-radius: 6px;
+    padding: 1rem; overflow-x: auto; font-size: .85rem; margin: .75rem 0;
+  }
+  pre .comment { color: #8b929a; }
+  .param-grid {
+    display: grid; grid-template-columns: auto 1fr;
+    gap: .25rem .75rem; font-size: .9rem; margin: .5rem 0;
+  }
+  .param-grid .key { color: #79c0ff; font-family: monospace; }
+  .progress-bar {
+    display: flex; gap: 6px; margin: .75rem 0;
+  }
+  .progress-bar .step {
+    flex: 1; height: 6px; border-radius: 3px;
+  }
+  .step.done { background: #238636; }
+  .step.active { background: #d29922; }
+  .step.pending { background: #2a2e3a; }
+  .btn {
+    display: inline-block; padding: .5rem 1.25rem;
+    border-radius: 6px; text-decoration: none; font-size: .9rem;
+    background: #1f6feb; color: #fff; border: none; cursor: pointer;
+    margin-top: .5rem;
+  }
+  .btn:hover { background: #388bfd; }
+  .hline { border: none; border-top: 1px solid #2a2e3a; margin: 1rem 0; }
+  .status-row {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: .4rem 0;
+  }
+  .status-row .label { display: flex; align-items: center; gap: .5rem; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+  .dot.green { background: #3fb950; }
+  .dot.yellow { background: #d29922; }
+  .dot.gray { background: #30363d; }
+</style>
+</head>
+<body>
+
+<h1>🧠 Cognitive Core</h1>
+<p class="subtitle">SFT Training Runner — MiniCPM5-1B TIES Merge → Tool-Calling Agent</p>
+
+<div class="card">
+  <h2>📊 Pipeline Status</h2>
+  <div class="progress-bar">
+    <div class="step done" title="Download models"></div>
+    <div class="step done" title="GGUF→HF conversion"></div>
+    <div class="step done" title="TIES merge"></div>
+    <div class="step active" title="SFT training ← YOU ARE HERE"></div>
+    <div class="step pending" title="DPO training"></div>
+    <div class="step pending" title="GGUF deploy"></div>
+  </div>
+  <div class="status-row"><span class="label"><span class="dot green"></span> Stage 0-2: Complete</span> <span>Merge done ✅</span></div>
+  <div class="status-row"><span class="label"><span class="dot yellow"></span> Stage 3: SFT</span> <span><strong>← Next</strong></span></div>
+  <div class="status-row"><span class="label"><span class="dot gray"></span> Stage 4: DPO</span> <span>~2-4h</span></div>
+  <div class="status-row"><span class="label"><span class="dot gray"></span> Stage 5: GGUF</span> <span>~5 min</span></div>
+</div>
+
+<div class="card">
+  <h2>🔧 Launch Container</h2>
+  <p>Run this from <code>~/cognitive-core</code> on the host:</p>
+  <pre>bash scripts/launch_container.sh</pre>
+  <p>Or manually:</p>
+  <pre>docker run -it --rm \
+  --device=/dev/kfd \
+  --device=/dev/dri/renderD128 \
+  --device=/dev/dri/card0 \
+  --group-add 991 \
+  --group-add video \
+  --shm-size=16g \
+  -v /home/pixie/cognitive-core:/workspace \
+  -e HSA_OVERRIDE_GFX_VERSION=11.0.0 \
+  -w /workspace \
+  cognitive-core:latest \
+  bash</pre>
+  <hr class="hline">
+  <p>Inside the container, verify GPU:</p>
+  <pre>python -c "import torch; print(torch.cuda.get_device_name(0))"
+# → Radeon RX 7900 XTX</pre>
+</div>
+
+<div class="card">
+  <h2>🏃 Run SFT (3 epochs)</h2>
+  <p>Full fine-tune. Expected <strong>~3-6 hours</strong> at 3 epochs.</p>
+
+  <h3 style="margin: 1rem 0 .5rem; font-size: .95rem;">Command to run inside container:</h3>
+
+  <pre>python models/code/train/sft.py \
+  --model /workspace/models/merged \
+  --train_file /workspace/models/Luminia-MiniCPM5-1B-Agent-GGUF/dataset/train_v4.jsonl \
+  --out /workspace/train/outputs/sft_claude_agent \
+  --epochs 3 \
+  --neftune 5 \
+  --bsz 1 \
+  --accum 24 \
+  --lr 1e-5 \
+  --max_len 24576 \
+  --train_cap 24576</pre>
+
+  <h3 style="margin: 1rem 0 .5rem; font-size: .95rem;">Parameter Reference</h3>
+  <div class="param-grid">
+    <span class="key">--epochs 3</span><span>3 passes over 45,762 training rows</span>
+    <span class="key">--neftune 5</span><span>Adds noise to embeddings (anti-overfit for multi-epoch)</span>
+    <span class="key">--bsz 1</span><span>Microbatch size (1 per step, safe for VRAM)</span>
+    <span class="key">--accum 24</span><span>Gradient accumulation steps (effective batch = 24)</span>
+    <span class="key">--lr 1e-5</span><span>Learning rate (standard for full fine-tune)</span>
+    <span class="key">--max_len 24576</span><span>Max sequence length (<a href="#" style="color:#58a6ff;">~24K</a> tokens)</span>
+    <span class="key">--train_cap 24576</span><span>Drop examples longer than this</span>
+  </div>
+
+  <h3 style="margin: 1rem 0 .5rem; font-size: .95rem;">Smoke test (5 minutes, verifies everything works):</h3>
+
+  <pre>python models/code/train/sft.py \
+  --model /workspace/models/merged \
+  --train_file /workspace/models/Luminia-MiniCPM5-1B-Agent-GGUF/dataset/train_v4.jsonl \
+  --out /workspace/train/outputs/sft_smoke \
+  --max_steps 5 \
+  --bsz 1 \
+  --accum 1 \
+  --max_len 4096 \
+  --train_cap 4096</pre>
+
+  <p style="margin-top: .75rem; color: #8b929a; font-size: .85rem;">
+    💡 The smoke test runs 5 steps, trains on short examples only,
+    and dumps logs/metrics to <code>models/logs/sft_metrics.jsonl</code>.
+    If that works, kill it and launch the full 3-epoch run above.
+  </p>
+</div>
+
+<div class="card">
+  <h2>📈 Monitoring</h2>
+  <p>Training logs stream to <code>models/logs/sft.log</code> and metrics to <code>models/logs/sft_metrics.jsonl</code>.</p>
+
+  <p style="margin-top: .5rem;">Watch loss in real-time (from another terminal):</p>
+  <pre>tail -f /workspace/models/logs/sft.log</pre>
+
+  <p style="margin-top: .5rem;">Check GPU utilization:</p>
+  <pre>watch -n 1 rocm-smi</pre>
+</div>
+
+<div class="card">
+  <h2>🧪 What to Check After SFT</h2>
+  <ol style="margin-left: 1.25rem; font-size: .9rem;">
+    <li><strong>Loss curve</strong> — should start around ~2.5-3.0 and trend down below 1.0</li>
+    <li><strong>Generated output</strong> — test with <code>test_prompts.txt</code> using llama.cpp or a quick Python script</li>
+    <li><strong>Tool calling format</strong> — the model should emit <code>&lt;function&gt;</code> blocks for search/calculation prompts</li>
+    <li><strong>Reasoning retained</strong> — the model should still use <code>&lt;think&gt;</code> for complex questions</li>
+  </ol>
+  <p style="margin-top: .75rem;">
+    <a href="configs/merge.yaml" style="color:#58a6ff;">merge config</a> ·
+    <a href="test_prompts.txt" style="color:#58a6ff;">test prompts</a> ·
+    <a href="models/code/train/sft.py" style="color:#58a6ff;">sft.py source</a>
+  </p>
+</div>
+
+<div class="card">
+  <h2>📋 After SFT: DPO</h2>
+  <p>Once SFT finishes, the final stage is DPO (Direct Preference Optimization)
+  to reinforce tool-calling behavior over stalling:</p>
+
+  <pre># 1. Generate on-policy preference pairs from SFT model
+python models/code/data/build_prefs_onpolicy_gpu.py \
+  --model /workspace/train/outputs/sft_claude_agent \
+  --src /workspace/models/Luminia-MiniCPM5-1B-Agent-GGUF/dataset/train_v4.jsonl \
+  --out /workspace/models/dataset/dpo_onpolicy_claude.jsonl
+
+# 2. DPO training
+python models/code/train/dpo.py \
+  --model /workspace/train/outputs/sft_claude_agent \
+  --data /workspace/models/dataset/dpo_onpolicy_claude.jsonl \
+  --out /workspace/train/outputs/final-cognitive-core \
+  --beta 0.1 \
+  --lr 1e-6 \
+  --epochs 3 \
+  --accum 8</pre>
+  <p style="color:#8b929a; font-size:.85rem; margin-top:.5rem;">
+    ⏱ DPO takes ~2-4 hours. VRAM is tight (~22GB). If OOM, reduce <code>--accum</code> to 4.
+  </p>
+</div>
+
+<div style="text-align:center; margin-top:2rem; font-size:.85rem; color:#484f58;">
+  ~/cognitive-core · whos-carmen
+</div>
+
+</body>
+</html>
