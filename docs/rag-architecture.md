@@ -64,8 +64,12 @@ but adding a layer of abstraction.
 | If you... | Pick |
 |---|---|
 | Want native tool parsing for MiniCPM5 | **SGLang** (build from main branch) |
-| Want simplicity, don't mind XML handling | **llama.cpp** (two servers) |
+| Want simplicity, don't mind XML handling | **llama.cpp** with [custom parser](../eval/tool_parser.py) |
 | Want the nicest dev experience | **Ollama** |
+
+A unified parser that handles both `<tool_call>` and `<function>` XML formats
+is included at [eval/tool_parser.py](../eval/tool_parser.py). It works with any
+serving layer — run it on the client side, or integrate it into your agent loop.
 
 All three expose an OpenAI-compatible API, so the choice doesn't affect the
 RAG pipeline. Switch later if needed.
