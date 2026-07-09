@@ -18,11 +18,7 @@ End-to-end pipeline for producing the cognitive core model on a g7e.2xlarge:
 | `scripts/dashboard.py` | Training progress dashboard (port 8765) |
 | `scripts/gguf_to_hf.py` | GGUF to HuggingFace safetensors converter |
 | `configs/merge.yaml` | Mergekit TIES config |
-| `configs/Modelfile` | Ollama deployment template |
-| `docs/phase-plan.md` | Step-by-step work plan with exact commands |
-| `docs/sft-runner.html` | Visual training guide |
-| `eval/dataset.jsonl` | 200 test cases for routing evaluation |
-| `eval/run_eval.py` | Eval runner (Ollama / OpenAI-compatible API) |
+| `eval/run_eval.py` | Eval runner (OpenAI-compatible API) |
 | `test_prompts.txt` | Quick sanity-check prompts |
 
 ## Quick Start

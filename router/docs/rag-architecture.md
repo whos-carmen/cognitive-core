@@ -32,13 +32,14 @@ are needed — most requests never reach it.
 SGLang is the **recommended backend** by the OpenBMB team for MiniCPM5. The reason is
 specific: MiniCPM5 emits tool calls in XML format (`<tool_call>...</tool_call>`),
 and SGLang has a **native parser** (`--tool-call-parser minicpm5`) that converts
-them to standard OpenAI-compatible tool_calls automatically. Neither llama.cpp
-nor Ollama has this parser — you'd need to handle the XML format yourself.
+them to standard OpenAI-compatible tool_calls automatically. llama.cpp doesn't
+have this parser — you'd need to handle the XML format yourself (use
+[../eval/tool_parser.py](../eval/tool_parser.py) if you go that route).
 
 Other SGLang advantages:
 - **RadixAttention prefix cache** — reuses KV cache across requests with
   shared prefixes, reducing latency and memory by ~30-50% for multi-turn
-- **Highest token throughput** in 2025-2026 benchmarks vs vLLM, TGI, Ollama
+- **Highest token throughput** in 2025-2026 benchmarks vs vLLM, TGI
 - **OpenAI-compatible API** — works with any client
 
 ### The Catch
@@ -56,29 +57,25 @@ custom format), llama.cpp is:
 - GPU-first, handles model swapping
 - Easy to run multiple servers on different ports
 
-Ollama sits between them — wrapping llama.cpp with nicer model management
-but adding a layer of abstraction.
-
 ### Recommendation
 
 | If you... | Pick |
 |---|---|
 | Want native tool parsing for MiniCPM5 | **SGLang** (build from main branch) |
 | Want simplicity, don't mind XML handling | **llama.cpp** with [custom parser](../eval/tool_parser.py) |
-| Want the nicest dev experience | **Ollama** |
 
 A unified parser that handles both `<tool_call>` and `<function>` XML formats
 is included at [eval/tool_parser.py](../eval/tool_parser.py). It works with any
 serving layer — run it on the client side, or integrate it into your agent loop.
 
-All three expose an OpenAI-compatible API, so the choice doesn't affect the
+All four expose an OpenAI-compatible API, so the choice doesn't affect the
 RAG pipeline. Switch later if needed.
 
 ### Layout
 
 ```
 Port 8081 — SGLang server serving MiniCPM5-1B (router)
-Port 8082 — llama.cpp/Ollama/SGLang serving RAG model (knowledge)
+Port 8082 — llama.cpp / SGLang serving RAG model (knowledge)
 ```
 
 VRAM fits both models simultaneously:

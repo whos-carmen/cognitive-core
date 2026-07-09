@@ -10,7 +10,7 @@ across sessions.
 ### Web UI: Open WebUI
 
 [Open WebUI](https://github.com/open-webui/open-webui) is the recommended web interface.
-It connects to any OpenAI-compatible backend (SGLang, Ollama, llama.cpp) and provides
+It connects to any OpenAI-compatible backend (SGLang, llama.cpp) and provides
 a full ChatGPT-like experience:
 
 ![Open WebUI connects to your model server]
@@ -24,14 +24,14 @@ Client browser → Open WebUI (Docker container)
                      └── Multi-user support
                          │
                          ▼
-                SGLang / Ollama / llama.cpp
+                SGLang / llama.cpp
                          │
                          ▼
                    Cognitive Core (port 8081)
                    RAG Model (port 8082)
 ```
 
-**Setup with SGLang:**
+**Setup:**
 
 ```bash
 docker run -d \
@@ -40,17 +40,6 @@ docker run -d \
     -v open-webui-data:/app/backend/data \
     -e OPENAI_API_BASE_URL=http://host.docker.internal:8081/v1 \
     -e OPENAI_API_KEY=not-needed \
-    ghcr.io/open-webui/open-webui:main
-```
-
-Or with Ollama (simpler but no native tool parser):
-
-```bash
-docker run -d \
-    --name open-webui \
-    -p 3000:8080 \
-    -v open-webui-data:/app/backend/data \
-    -e OLLAMA_BASE_URL=http://host.docker.internal:11434 \
     ghcr.io/open-webui/open-webui:main
 ```
 

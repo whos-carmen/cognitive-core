@@ -5,11 +5,8 @@ Evaluates a model's ability to route between answering, tool calling,
 delegating to oracles, reasoning, and abstaining.
 
 Usage:
-    # Ollama (default)
-    python eval/run_eval.py --model cognitive-core
-
-    # llama.cpp server (OpenAI-compatible)
-    python eval/run_eval.py --model cognitive-core --base-url http://localhost:8080/v1
+    # OpenAI-compatible API (SGLang / llama.cpp / vLLM)
+    python eval/run_eval.py --model cognitive-core --base-url http://localhost:8081/v1
 
     # With specific quantization
     python eval/run_eval.py --model cognitive-core --quant Q8_0
@@ -67,31 +64,8 @@ EXPECTED = {
 }
 
 
-def call_ollama(model: str, prompt: str, system: str = "", base_url: str = "http://localhost:11434") -> str:
-    """Call Ollama API."""
-    url = f"{base_url}/api/chat"
-    payload = {
-        "model": model,
-        "messages": [
-            {"role": "system", "content": system},
-            {"role": "user", "content": prompt},
-        ],
-        "stream": False,
-        "options": {"temperature": 0.7},
-    }
-    if HTTPX:
-        r = httpx.post(url, json=payload, timeout=120)
-        r.raise_for_status()
-        return r.json()["message"]["content"]
-    else:
-        data = json.dumps(payload).encode()
-        req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
-        with urllib.request.urlopen(req, timeout=120) as resp:
-            return json.loads(resp.read())["message"]["content"]
-
-
-def call_openai_compatible(model: str, prompt: str, system: str, base_url: str) -> str:
-    """Call any OpenAI-compatible API (llama.cpp server, vLLM, etc)."""
+def call_api(model: str, prompt: str, system: str, base_url: str) -> str:
+    """Call any OpenAI-compatible API."""
     url = f"{base_url}/chat/completions"
     payload = {
         "model": model,
@@ -207,11 +181,11 @@ def run_evaluation(args):
 
         try:
             if args.base_url:
-                response = call_openai_compatible(
+                response = call_api(
                     args.model, prompt, SYSTEM_PROMPT, args.base_url
                 )
             else:
-                response = call_ollama(args.model, prompt, SYSTEM_PROMPT)
+                raise ValueError("Must provide --base-url")
         except Exception as e:
             print(f"ERROR: {e}")
             response = ""
@@ -314,8 +288,8 @@ def generate_report(results_file: str):
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description="Cognitive Core Routing Evaluation")
-    ap.add_argument("--model", default="cognitive-core", help="Model name (Ollama or HF)")
-    ap.add_argument("--base-url", default=None, help="OpenAI-compatible API URL (llama.cpp server, etc)")
+    ap.add_argument("--model", default="cognitive-core", help="Model name")
+    ap.add_argument("--base-url", required=True, help="OpenAI-compatible API URL (e.g. http://localhost:8081/v1)")
     ap.add_argument("--report-only", action="store_true", help="Generate report from existing results")
     ap.add_argument("--results", default=None, help="Results file for --report-only")
     args = ap.parse_args()
