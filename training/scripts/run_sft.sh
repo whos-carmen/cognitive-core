@@ -12,7 +12,9 @@ DOCKER_CMD=(
     --gpus all
     --shm-size=16g
     -v "${REPO_ROOT}:/workspace"
-    -e TOKENIZERS_PARALLELISM=[redacted]
+    -v "${REPO_ROOT}/models-cache:/workspace/models"
+    -v "${REPO_ROOT}/train:/workspace/train"
+    -e TOKENIZERS_PARALLELISM=false
     -w /workspace
     cognitive-core:latest
 )
@@ -74,15 +76,16 @@ case "$MODE" in
     ;;
 
   dashboard)
+    DASH_TOKEN="${2:-}"
     echo "=== STARTING LIVE TRAINING DASHBOARD ==="
     echo "Open: http://$(hostname -I | awk '{print $1}'):8765"
     echo ""
     cd "${REPO_ROOT}"
-    python3 scripts/dashboard.py --port 8765 --host 0.0.0.0
+    python3 scripts/dashboard.py --port 8765 --host 0.0.0.0 ${DASH_TOKEN:+--token "$DASH_TOKEN"}
     ;;
 
   *)
-    echo "Usage: bash scripts/run_sft.sh [smoke|full|dpo|monitor|dashboard]"
+    echo "Usage: bash scripts/run_sft.sh [smoke|full|dpo|monitor|dashboard [token]]"
     exit 1
     ;;
 esac

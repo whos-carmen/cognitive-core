@@ -120,7 +120,7 @@ cd "$REPO_DIR"
 # ─────────────────────────────────────────────
 echo ""
 echo "=== [6/7] Pull training container ==="
-docker pull ghcr.io/unslothai/unsloth:latest-cuda || \
+docker pull ghcr.io/unslothai/unsloth:2025.6.1-cuda || \
     echo "WARNING: Failed to pull container. Will retry on first run."
 
 # Also pull a lightweight image for dashboard/utility tasks
@@ -147,7 +147,7 @@ echo "  Setup Complete!"
 echo "============================================"
 echo ""
 echo "  Repo:        $REPO_DIR"
-echo "  Dashboard:   cd $REPO_DIR && python3 scripts/dashboard.py --port 8765"
+echo "  Dashboard:   cd $REPO_DIR && python3 scripts/dashboard.py --port 8765 --token YOUR_SECRET"
 echo ""
 echo "  Next steps:"
 echo "    1. Log out and back in (for docker group)"

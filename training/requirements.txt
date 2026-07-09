@@ -9,9 +9,6 @@ accelerate
 peft
 trl>=0.12.0
 
-# Unsloth extras
-unsloth
-
 # Quantization & model conversion
 gguf
 safetensors
