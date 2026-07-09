@@ -316,17 +316,40 @@ Shows the model its own tool-calling successes and failures. Rewards acting (emi
 cd /workspace
 git clone https://github.com/ggerganov/llama.cpp
 
-# Convert to F16
+# Convert to F16 (intermediate step for quantization)
 python llama.cpp/convert_hf_to_gguf.py /workspace/final-cognitive-core \
     --outfile /workspace/final-cognitive-core-f16.gguf --outtype f16
 
-# Quantize
+# Quantize to Q8_0 (near-lossless, faster than F16)
 cd llama.cpp
 ./llama-quantize ../final-cognitive-core-f16.gguf ../final-cognitive-core-Q8_0.gguf Q8_0
-./llama-quantize ../final-cognitive-core-f16.gguf ../final-cognitive-core-Q6_K.gguf Q6_K
+
+# Delete F16 — only needed as an intermediate
+rm ../final-cognitive-core-f16.gguf
 ```
 
-### Ollama
+### Upload to HuggingFace (Private Repo)
+
+Push the final Q8_0 model to a private HuggingFace repo for storage and sharing:
+
+```bash
+# Install huggingface-cli if not present
+pip install huggingface_hub
+
+# Log in with a User Access Token
+# Create one at huggingface.co/settings/tokens
+huggingface-cli login --token hf_your_token_here
+
+# Create a private model repo
+huggingface-cli repo create your-org/cognitive-core-v1 \
+    --type model --private
+
+# Upload the single Q8_0 file
+huggingface-cli upload your-org/cognitive-core-v1 \
+    /workspace/final-cognitive-core-Q8_0.gguf \
+    /cognitive-core-v1-Q8_0.gguf \
+    --repo-type model
+```
 
 ```bash
 ollama create cognitive-core -f configs/Modelfile
