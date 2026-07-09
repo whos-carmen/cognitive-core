@@ -384,6 +384,21 @@ API at `http://<vm-ip>:8080/v1`.
 
 ---
 
+## RAG Architecture
+
+The cognitive core routes knowledge questions to a RAG pipeline — a separate model answers
+questions based on document context while the router decides when to use it.
+
+See [docs/rag-architecture.md](docs/rag-architecture.md) for full details:
+- Serving layer comparison (llama.cpp / Ollama / SGLang)
+- RAG model options (Llama-3.1-8B, Qwen2.5-7B, Gemma-2-9B)
+- Embedding models (CPU-based, tiny)
+- Vector DB options (Chroma, Qdrant, LanceDB, Pinecone)
+- Document ingestion with Firecrawl or Crawl4AI
+- Complete data flow and VRAM budget
+
+---
+
 ## Uncertainty Detection (Future Work)
 
 The routing framework will use three layers of uncertainty detection:
