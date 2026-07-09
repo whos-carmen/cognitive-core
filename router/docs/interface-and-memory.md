@@ -7,58 +7,25 @@ across sessions.
 
 ## Interface Options
 
-### Web UI: Open WebUI
+### Web UI: Runtime Dashboard
 
-[Open WebUI](https://github.com/open-webui/open-webui) is the recommended web interface.
-It connects to any OpenAI-compatible backend (SGLang, llama.cpp) and provides
-a full ChatGPT-like experience:
-
-![Open WebUI connects to your model server]
-
-```
-Client browser → Open WebUI (Docker container)
-                     │
-                     ├── Chat history (stored in SQLite)
-                     ├── RAG upload (built-in)
-                     ├── Model switching
-                     └── Multi-user support
-                         │
-                         ▼
-                SGLang / llama.cpp
-                         │
-                         ▼
-                   Cognitive Core (port 8081)
-                   RAG Model (port 8082)
-```
+The runtime dashboard at `scripts/runtime_dashboard.py` shows every routing
+decision, RAG query, tool call, and memory access in real-time.
 
 **Setup:**
 
 ```bash
-docker run -d \
-    --name open-webui \
-    -p 3000:8080 \
-    -v open-webui-data:/app/backend/data \
-    -e OPENAI_API_BASE_URL=http://host.docker.internal:8081/v1 \
-    -e OPENAI_API_KEY=not-needed \
-    ghcr.io/open-webui/open-webui:main
+python3 scripts/runtime_dashboard.py --port 8766
+# Open http://localhost:8766
 ```
-
-**Why Open WebUI:**
-- Self-hosted, full privacy
-- Chat history, search, export
-- Built-in RAG (upload PDFs/docs and chat with them)
-- Model switching (toggle between router and RAG model)
-- Works with any OpenAI-compatible backend
-- Mobile-friendly
 
 ### Alternatives
 
-| Interface | Best For | Why Not Primary |
-|---|---|---|
-| **Open WebUI** | General chat, RAG, history | — |
-| **pi.dev** | Terminal-first agentic harness | Terminal-only, no web UI |
-| **Continue.dev** | VS Code inline AI | IDE-only, not general chat |
-| **Custom CLI** | Scripted/automated access | No UI by definition |
+| Interface | Best For |
+|---|---|
+| **Runtime Dashboard** | Full decision visibility |
+| **pi.dev** | Terminal-first agentic harness |
+| **Custom CLI** | Scripted/automated access |
 
 ---
 
@@ -250,37 +217,7 @@ User context: {memories}
 """
 ```
 
-**Why Mem0 for this project:**
-- Plugs into existing router — no architecture change
-- Semantic search over past conversations (not just keyword)
-- Multi-scope: per-user, per-session, global
-- Can back it with your own Chroma/Qdrant DB
-- Open source (MIT license)
 
-**Setup:**
-
-```bash
-pip install mem0ai
-```
-
-```python
-from mem0ai import Memory
-
-# Uses Chroma by default — no server needed
-memory = Memory()
-
-# On each user message, store and retrieve
-def handle_message(user_id, message):
-    # Store what the user said
-    memories = memory.get(user_id)
-    # Build prompt with memories
-    prompt = f"Previous context: {memories}\nUser: {message}"
-    # Send to cognitive core
-    response = client.chat.completions.create(...)
-    # Store the exchange
-    memory.add(f"User said: {message}. Assistant replied: {response}", user_id)
-    return response
-```
 
 ### Option 2: DIY with Chroma (Simplest Backend)
 
@@ -335,8 +272,8 @@ displays it in real-time.
                                   │
                                   ▼
                      ┌──────────────────────┐
-                     │   Open WebUI (3000)   │
-                     │   or custom CLI       │
+                     │  Runtime Dashboard    │
+                     │  (port 8766)          │
                      └──────────┬───────────┘
                                 │ HTTP (OpenAI-compatible)
                                 ▼
@@ -373,7 +310,7 @@ All on the 7900 XTX machine. The remote client just needs a browser or terminal.
 | MiniCPM5-1B Q8_0 (router) | ~1.1 GB | Always loaded |
 | RAG model 7-8B Q4_K_M | ~5.5 GB | On demand |
 | KV cache (32K × 2) | ~2-3 GB | Shared |
-| Open WebUI | ~0 GB (Docker, CPU) | No GPU needed |
+| Runtime Dashboard | ~0 GB (CPU) | No GPU needed |
 | Mem0 / Chroma | ~0 GB (CPU) | No GPU needed |
 | **Total** | **~9 GB** | **15 GB free** |
 

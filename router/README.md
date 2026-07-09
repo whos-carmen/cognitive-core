@@ -15,7 +15,7 @@ Route requests between direct answering, tool calling, RAG, delegation, and memo
 ## Architecture
 
 ```
-User / client (Open WebUI, pi.dev, custom CLI)
+User / client (Runtime Dashboard, pi.dev, custom CLI)
          │
          ▼
     SGLang (port 8081) ← MiniCPM5-1B Q8_0
@@ -42,9 +42,8 @@ User / client (Open WebUI, pi.dev, custom CLI)
 
 | Interface | How | Purpose |
 |---|---|---|
-| **Open WebUI** | Docker, connects to localhost:8081/v1 | Full web chat with history, RAG upload |
+| **Runtime dashboard** | `python3 scripts/runtime_dashboard.py` | Web UI — see every routing decision, RAG query, tool call, memory access |
 | **pi.dev agent** | `pi connect localhost:8081` | Terminal-first agentic harness, extensible |
-| **Runtime dashboard** | `python3 scripts/runtime_dashboard.py` | Observability — see every routing decision |
 | **Custom CLI** | OpenAI-compatible client library | Scripted / automated access |
 
 ## pi.dev Integration
