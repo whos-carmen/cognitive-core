@@ -15,8 +15,16 @@ Route requests between direct answering, tool calling, RAG, and delegation.
 ## Architecture
 
 ```
-7900 XTX machine (always-on)
+User / client (Open WebUI, CLI, custom app)
          │
+         ▼
+┌──────────────────────────────────┐
+│  Memory Layer (Mem0 / Chroma)    │
+│  retrieves relevant context from  │
+│  past conversations / sessions    │
+└────────────┬─────────────────────┘
+             │ memory injected into prompt
+             ▼
     llama-server (port 8081) ← MiniCPM5-1B Q8_0
          │
     ┌────┴──────────────────────────┐
@@ -26,6 +34,11 @@ Route requests between direct answering, tool calling, RAG, and delegation.
     ├── RAG → query Chroma +       │
     │       Llama-3.1-8B (port 8082)│
     └── Delegate → ask cloud oracle │
+         │
+         ▼
+    Runtime Dashboard (port 8766)
+    reads /var/log/cognitive-core/traces.jsonl
+    shows every decision, RAG query, tool call, memory access
 ```
 
 ## Quick Start
