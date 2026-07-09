@@ -1,40 +1,11 @@
 #!/usr/bin/env python3
-"""Cognitive Core — Runtime Observability Dashboard
+"""Cognitive Core — Runtime Observability Dashboard + Data Ingestion
 
-Shows the router's decision chain in real-time: what the router decided,
-whether it delegated to RAG, what was retrieved, what tools were called,
-and memory activity.
+Shows the router's decision chain in real-time, and allows uploading files
+to the Chroma knowledge base via the web UI.
 
 Usage:
-    python scripts/runtime_dashboard.py [--port 8766]
-
-The cognitive core should log decisions as JSONL to:
-    /var/log/cognitive-core/traces.jsonl
-
-Each trace line:
-{
-    "timestamp": "2026-07-09T14:32:01Z",
-    "user": "What does OPD mean?",
-    "decision": "needs_knowledge",       // answer_directly | tool_call | needs_knowledge | needs_rag | memory_recall
-    "router_model": "MiniCPM5-1B",
-    "router_response": "...",
-    "rag": {
-        "collection": "papers",
-        "query": "OPD on-policy distillation",
-        "retrieved_chunks": ["chunk_1", "chunk_2"],
-        "model": "Llama-3.1-8B"
-    },
-    "tool": {
-        "name": "web_search",
-        "parameters": {"query": "..."},
-        "result": "..."
-    },
-    "memory": {
-        "recalled": ["previous context"],
-        "stored": true
-    },
-    "latency_ms": 2430
-}
+    python scripts/runtime_dashboard.py --port 8766
 """
 
 import argparse
@@ -42,16 +13,39 @@ import json
 import os
 import re
 import time
+import io
+import cgi
+import uuid
+import traceback
 from datetime import datetime
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse
 
 TRACES_PATH = "/var/log/cognitive-core/traces.jsonl"
+CHROMA_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "chroma_db")
 MAX_TRACES = 500
+
+# Lazy imports for ingestion (only loaded when a file is uploaded)
+_embed_model = None
+_chroma_collection = None
+
+def get_embed_model():
+    global _embed_model
+    if _embed_model is None:
+        from sentence_transformers import SentenceTransformer
+        _embed_model = SentenceTransformer("ibm-granite/granite-embedding-english-r2")
+    return _embed_model
+
+def get_chroma_collection(path):
+    global _chroma_collection
+    if _chroma_collection is None:
+        import chromadb
+        db = chromadb.PersistentClient(path=path)
+        _chroma_collection = db.get_or_create_collection("knowledge")
+    return _chroma_collection
 
 
 def read_traces(path: str, last_n: int = 200) -> list[dict]:
-    """Read the last N trace entries from the JSONL log file."""
     if not os.path.exists(path):
         return []
     traces = []
@@ -70,7 +64,6 @@ def read_traces(path: str, last_n: int = 200) -> list[dict]:
 
 
 def tail_file(path: str, n: int = 20) -> str:
-    """Tail the last N lines of a file."""
     if not os.path.exists(path):
         return ""
     try:
@@ -81,7 +74,56 @@ def tail_file(path: str, n: int = 20) -> str:
         return ""
 
 
-def _handler_class(traces_path: str):
+def ingest_text(text: str, source: str, chroma_path: str, metadata: dict = None) -> dict:
+    """Chunk, embed with Granite, and store in Chroma."""
+    model = get_embed_model()
+    collection = get_chroma_collection(chroma_path)
+
+    # Simple chunking: 512-char chunks with 256-char overlap
+    chunk_size = 512
+    overlap = 256
+    chunks = []
+    ids = []
+
+    for i in range(0, max(len(text), 1), chunk_size - overlap):
+        chunk = text[i:i + chunk_size]
+        if len(chunk.strip()) < 20:
+            continue
+        chunk_id = f"{source}-{uuid.uuid4().hex[:8]}-{i}"
+        chunks.append(chunk)
+        ids.append(chunk_id)
+
+    if not chunks:
+        return {"status": "error", "message": "Text too short after chunking"}
+
+    # Embed in batches
+    batch_size = 64
+    total_chunks = len(chunks)
+    metadatas = [{"source": source, **(metadata or {})} for _ in chunks]
+
+    for batch_start in range(0, total_chunks, batch_size):
+        batch_end = min(batch_start + batch_size, total_chunks)
+        batch_texts = chunks[batch_start:batch_end]
+        batch_ids = ids[batch_start:batch_end]
+        batch_meta = metadatas[batch_start:batch_end]
+
+        embeddings = model.encode(batch_texts, normalize_embeddings=True).tolist()
+        collection.add(
+            documents=batch_texts,
+            embeddings=embeddings,
+            metadatas=batch_meta,
+            ids=batch_ids
+        )
+
+    return {
+        "status": "ok",
+        "chunks": total_chunks,
+        "source": source,
+        "total_chars": len(text),
+    }
+
+
+def _handler_class(traces_path: str, chroma_path: str):
     from http.server import BaseHTTPRequestHandler
     from urllib.parse import urlparse
 
@@ -101,8 +143,63 @@ def _handler_class(traces_path: str):
                 traces = read_traces(traces_path)
                 stats = compute_stats(traces)
                 self.send_json(stats)
+            elif path == "/api/ingest/stats":
+                collection = get_chroma_collection(chroma_path)
+                count = collection.count()
+                self.send_json({"count": count})
             else:
                 self.send_html()
+
+        def do_POST(self):
+            parsed = urlparse(self.path)
+            path = parsed.path
+
+            if path == "/api/ingest":
+                self._handle_upload()
+
+        def _handle_upload(self):
+            content_type = self.headers.get("Content-Type", "")
+            ct = content_type.split(";")[0]
+
+            try:
+                if "multipart/form-data" in content_type:
+                    form = cgi.FieldStorage(
+                        fp=self.rfile,
+                        headers=self.headers,
+                        environ={
+                            "REQUEST_METHOD": "POST",
+                            "CONTENT_TYPE": content_type,
+                        }
+                    )
+                    file_item = form.getfirst("file")
+                    source_name = form.getfirst("source") or file_item.filename or "upload"
+
+                    if file_item and hasattr(file_item, "file"):
+                        text = file_item.file.read().decode("utf-8", errors="replace")
+                    else:
+                        self.send_json({"status": "error", "message": "No file uploaded"})
+                        return
+
+                elif "application/json" in content_type:
+                    length = int(self.headers.get("Content-Length", 0))
+                    body = self.rfile.read(length).decode("utf-8")
+                    data = json.loads(body)
+                    text = data.get("text", "")
+                    source_name = data.get("source", "paste")
+
+                else:
+                    self.send_json({"status": "error", "message": f"Unsupported content type: {ct}"})
+                    return
+
+                if len(text.strip()) < 10:
+                    self.send_json({"status": "error", "message": "Text too short"})
+                    return
+
+                result = ingest_text(text, source_name, chroma_path)
+                self.send_json(result)
+
+            except Exception as e:
+                self.send_json({"status": "error", "message": str(e)})
 
         def send_json(self, data):
             self.send_response(200)
@@ -126,7 +223,6 @@ def _handler_class(traces_path: str):
 
 
 def compute_stats(traces: list[dict]) -> dict:
-    """Compute aggregate stats from traces."""
     total = len(traces)
     if total == 0:
         return {"total": 0, "by_decision": {}, "avg_latency_ms": 0, "rag_count": 0, "tool_count": 0, "memory_count": 0}
@@ -140,14 +236,9 @@ def compute_stats(traces: list[dict]) -> dict:
     for t in traces:
         dec = t.get("decision", "unknown")
         decisions[dec] = decisions.get(dec, 0) + 1
-
-        if t.get("rag"):
-            rag_count += 1
-        if t.get("tool"):
-            tool_count += 1
-        if t.get("memory"):
-            memory_count += 1
-
+        if t.get("rag"): rag_count += 1
+        if t.get("tool"): tool_count += 1
+        if t.get("memory"): memory_count += 1
         lat = t.get("latency_ms")
         if lat is not None:
             latencies.append(lat)
@@ -178,6 +269,17 @@ HTML = r"""<!DOCTYPE html>
   h1 { font-size: 1.2rem; margin-bottom: .25rem; display: flex; align-items: center; gap: .5rem; }
   .subtitle { color: #8b949e; font-size: .8rem; margin-bottom: 1rem; }
 
+  /* Tabs */
+  .tabs { display: flex; gap: .25rem; margin-bottom: 1rem; }
+  .tab {
+    padding: .4rem 1rem; border-radius: 6px 6px 0 0;
+    cursor: pointer; font-size: .85rem; border: 1px solid #21262d; border-bottom: none;
+    background: #161b22; color: #8b949e;
+  }
+  .tab.active { background: #0d1117; color: #c9d1d9; border-bottom: 1px solid #0d1117; margin-bottom: -1px; }
+  .tab-pane { display: none; }
+  .tab-pane.active { display: block; }
+
   /* Stats bar */
   .stats-bar {
     display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
@@ -189,7 +291,6 @@ HTML = r"""<!DOCTYPE html>
   }
   .stat-card .number { font-size: 1.3rem; font-weight: 600; color: #58a6ff; font-family: monospace; }
   .stat-card .label { font-size: .7rem; color: #8b949e; text-transform: uppercase; letter-spacing: .3px; }
-  .stat-card .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; }
 
   /* Trace feed */
   .trace-feed { display: flex; flex-direction: column; gap: .5rem; }
@@ -215,7 +316,6 @@ HTML = r"""<!DOCTYPE html>
   .decision-unknown { background: #21262d; color: #8b949e; }
 
   .trace-body { color: #8b949e; font-size: .8rem; line-height: 1.4; }
-  .trace-body .label { color: #484f58; }
   .trace-body .rag-block, .trace-body .tool-block, .trace-body .memory-block {
     margin-top: .3rem; padding: .4rem .6rem; background: #0d1117;
     border-radius: 4px; font-family: monospace; font-size: .75rem;
@@ -227,12 +327,52 @@ HTML = r"""<!DOCTYPE html>
 
   .latency { font-size: .75rem; color: #484f58; font-family: monospace; }
 
-  .empty-state {
-    text-align: center; padding: 3rem 1rem; color: #484f58;
+  /* Ingestion */
+  .ingest-area {
+    background: #161b22; border: 1px solid #21262d; border-radius: 6px;
+    padding: 1.5rem; margin-bottom: 1rem;
   }
-  .empty-state code { background: #161b22; padding: 2px 6px; border-radius: 4px; }
+  .ingest-area h2 { font-size: 1rem; margin-bottom: .5rem; }
+  .ingest-area p { color: #8b949e; font-size: .85rem; margin-bottom: 1rem; }
+  .upload-zone {
+    border: 2px dashed #21262d; border-radius: 8px;
+    padding: 2rem; text-align: center; cursor: pointer;
+    margin-bottom: 1rem;
+  }
+  .upload-zone:hover { border-color: #58a6ff; background: #1a1d27; }
+  .upload-zone.dragover { border-color: #3fb950; background: #1a4731; }
+  .upload-zone .icon { font-size: 2rem; margin-bottom: .5rem; }
+  .upload-zone .hint { color: #484f58; font-size: .8rem; margin-top: .3rem; }
+
+  .paste-area { margin-bottom: 1rem; }
+  .paste-area textarea {
+    width: 100%; min-height: 120px;
+    background: #0d1117; border: 1px solid #21262d; border-radius: 6px;
+    color: #c9d1d9; padding: .75rem; font-family: monospace; font-size: .8rem;
+    resize: vertical;
+  }
+  .paste-area textarea:focus { outline: none; border-color: #58a6ff; }
+
+  .ingest-actions { display: flex; gap: .5rem; align-items: center; }
+  .btn {
+    padding: .4rem 1rem; border-radius: 6px; border: none;
+    font-size: .85rem; cursor: pointer; font-weight: 500;
+  }
+  .btn-primary { background: #238636; color: #fff; }
+  .btn-primary:hover { background: #2ea043; }
+  .btn-primary:disabled { opacity: .5; cursor: not-allowed; }
+
+  .ingest-result {
+    margin-top: .75rem; padding: .5rem .75rem; border-radius: 6px;
+    font-size: .85rem; display: none;
+  }
+  .ingest-result.ok { display: block; background: #1a4731; color: #7ee787; }
+  .ingest-result.err { display: block; background: #3b1a1a; color: #f85149; }
 
   .last-updated { font-size: .7rem; color: #484f58; text-align: right; margin-top: .5rem; }
+
+  .empty-state { text-align: center; padding: 3rem 1rem; color: #484f58; }
+  .empty-state code { background: #161b22; padding: 2px 6px; border-radius: 4px; }
 
   @media (max-width: 640px) {
     .trace-header { flex-wrap: wrap; }
@@ -246,30 +386,77 @@ HTML = r"""<!DOCTYPE html>
   <span>🔍 Cognitive Core</span>
   <span id="traceCount" style="font-size:.8rem;color:#8b949e;font-family:monospace;">—</span>
 </h1>
-<p class="subtitle">Runtime observability — every routing decision, RAG query, tool call, and memory access</p>
+<p class="subtitle">Runtime observability + RAG data ingestion</p>
 
-<!-- Stats -->
-<div class="stats-bar" id="statsBar">
-  <div class="stat-card"><div class="number" id="statTotal">—</div><div class="label">Total Requests</div></div>
-  <div class="stat-card"><div class="number" id="statAnswer">—</div><div class="label">Answered Directly</div></div>
-  <div class="stat-card"><div class="number" id="statTool">—</div><div class="label">Tool Calls</div></div>
-  <div class="stat-card"><div class="number" id="statRag">—</div><div class="label">RAG Queries</div></div>
-  <div class="stat-card"><div class="number" id="statMemory">—</div><div class="label">Memory Accesses</div></div>
-  <div class="stat-card"><div class="number" id="statLatency">—</div><div class="label">Avg Latency (ms)</div></div>
+<!-- Tab bar -->
+<div class="tabs">
+  <div class="tab active" onclick="switchTab('traces')">📊 Traces</div>
+  <div class="tab" onclick="switchTab('ingest')">📥 Ingest</div>
 </div>
 
-<!-- Trace feed -->
-<div id="traceFeed" class="trace-feed">
-  <div class="empty-state" id="emptyState">
-    <p style="margin-bottom:.5rem;">Waiting for traces...</p>
-    <p style="font-size:.75rem;">The cognitive core logs decisions to <code>/var/log/cognitive-core/traces.jsonl</code></p>
-    <p style="font-size:.75rem;">Once traces appear, this dashboard updates every 2 seconds.</p>
+<!-- Traces tab -->
+<div id="tab-traces" class="tab-pane active">
+  <!-- Stats -->
+  <div class="stats-bar">
+    <div class="stat-card"><div class="number" id="statTotal">—</div><div class="label">Total Requests</div></div>
+    <div class="stat-card"><div class="number" id="statAnswer">—</div><div class="label">Answered Directly</div></div>
+    <div class="stat-card"><div class="number" id="statTool">—</div><div class="label">Tool Calls</div></div>
+    <div class="stat-card"><div class="number" id="statRag">—</div><div class="label">RAG Queries</div></div>
+    <div class="stat-card"><div class="number" id="statMemory">—</div><div class="label">Memory Accesses</div></div>
+    <div class="stat-card"><div class="number" id="statLatency">—</div><div class="label">Avg Latency (ms)</div></div>
+  </div>
+
+  <div id="traceFeed" class="trace-feed">
+    <div class="empty-state" id="emptyState">
+      <p style="margin-bottom:.5rem;">Waiting for traces...</p>
+      <p style="font-size:.75rem;">The cognitive core logs decisions to <code>/var/log/cognitive-core/traces.jsonl</code></p>
+    </div>
+  </div>
+</div>
+
+<!-- Ingest tab -->
+<div id="tab-ingest" class="tab-pane">
+  <div class="ingest-area">
+    <h2>📥 Upload File</h2>
+    <p>Upload code samples, documentation, man pages, past projects — anything you want the router to know about.</p>
+
+    <div class="upload-zone" id="uploadZone" onclick="document.getElementById('fileInput').click()">
+      <div class="icon">📄</div>
+      <div>Click or drop a file here</div>
+      <div class="hint">.txt, .md, .py, .js, .sh, .jsonl, .pdf</div>
+    </div>
+    <input type="file" id="fileInput" style="display:none" accept=".txt,.md,.py,.js,.ts,.go,.rs,.sh,.jsonl,.csv,.json,.yaml" onchange="uploadFile(this.files[0])">
+
+    <details style="margin-bottom:.75rem;">
+      <summary style="cursor:pointer;color:#8b949e;font-size:.85rem;">Or paste text directly</summary>
+      <div class="paste-area">
+        <textarea id="pasteText" placeholder="Paste code, documentation, or notes here..."></textarea>
+        <div class="ingest-actions">
+          <input id="pasteSource" type="text" placeholder="Source name (e.g. ffmpeg-man, project-alpha)" style="flex:1;background:#0d1117;border:1px solid #21262d;border-radius:6px;color:#c9d1d9;padding:.4rem .6rem;font-size:.85rem;">
+          <button class="btn btn-primary" onclick="pasteIngest()">Ingest</button>
+        </div>
+      </div>
+    </details>
+
+    <div id="ingestResult" class="ingest-result"></div>
+
+    <div style="margin-top:.5rem;font-size:.8rem;color:#484f58;">
+      <span id="kbCount">Chroma KB: —</span>
+    </div>
   </div>
 </div>
 
 <div class="last-updated" id="lastUpdated">Last updated: —</div>
 
 <script>
+function switchTab(name) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.tab-pane').forEach(t => t.classList.remove('active'));
+  document.querySelector(`.tab[onclick*="'${name}'"]`).classList.add('active');
+  document.getElementById(`tab-${name}`).classList.add('active');
+  if (name === 'ingest') updateKbCount();
+}
+
 function esc(s) {
   if (s == null) return '';
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
@@ -280,11 +467,8 @@ function renderTrace(t) {
   const decision = t.decision || 'unknown';
   const user = esc(t.user || '(no prompt)');
   const lat = t.latency_ms != null ? t.latency_ms + 'ms' : '';
-
-  // Build body sections
   let bodyHtml = '';
 
-  // Router response snippet
   if (t.router_response) {
     const snippet = t.router_response.length > 200
       ? esc(t.router_response.slice(0,200)) + '...'
@@ -292,7 +476,6 @@ function renderTrace(t) {
     bodyHtml += `<div style="margin-top:.3rem;color:#c9d1d9;">${snippet}</div>`;
   }
 
-  // RAG block
   if (t.rag) {
     const rag = t.rag;
     let ragHtml = `<span class="label">RAG</span>`;
@@ -308,7 +491,6 @@ function renderTrace(t) {
     bodyHtml += `<div class="rag-block">${ragHtml}</div>`;
   }
 
-  // Tool block
   if (t.tool) {
     const tool = t.tool;
     let toolHtml = `<span class="label">Tool</span>`;
@@ -320,12 +502,10 @@ function renderTrace(t) {
     bodyHtml += `<div class="tool-block">${toolHtml}</div>`;
   }
 
-  // Memory block
   if (t.memory) {
     const mem = t.memory;
     let memHtml = `<span class="label">Memory</span>`;
-    if (mem.recalled && mem.recalled.length > 0)
-      memHtml += `\n  Recalled: ${mem.recalled.length} items`;
+    if (mem.recalled && mem.recalled.length > 0) memHtml += `\n  Recalled: ${mem.recalled.length} items`;
     if (mem.stored) memHtml += `\n  Stored: ✓`;
     bodyHtml += `<div class="memory-block">${memHtml}</div>`;
   }
@@ -344,40 +524,90 @@ function renderTrace(t) {
 }
 
 function update() {
-  // Traces
-  fetch('/api/traces')
-    .then(r => r.json())
-    .then(d => {
-      const feed = document.getElementById('traceFeed');
-      const empty = document.getElementById('emptyState');
+  fetch('/api/traces').then(r => r.json()).then(d => {
+    const feed = document.getElementById('traceFeed');
+    const empty = document.getElementById('emptyState');
+    if (d.traces.length === 0) {
+      if (empty) empty.style.display = 'block';
+      return;
+    }
+    if (empty) empty.style.display = 'none';
+    document.getElementById('traceCount').textContent = d.count + ' traces';
+    feed.innerHTML = d.traces.slice().reverse().map(renderTrace).join('');
+  });
 
-      if (d.traces.length === 0) {
-        if (empty) empty.style.display = 'block';
-        return;
-      }
-      if (empty) empty.style.display = 'none';
-
-      document.getElementById('traceCount').textContent = d.count + ' traces';
-
-      feed.innerHTML = d.traces.slice().reverse().map(renderTrace).join('');
-    });
-
-  // Stats
-  fetch('/api/stats')
-    .then(r => r.json())
-    .then(d => {
-      document.getElementById('statTotal').textContent = d.total || 0;
-      document.getElementById('statAnswer').textContent = (d.by_decision && d.by_decision.answer_directly) || 0;
-      document.getElementById('statTool').textContent = d.tool_count || 0;
-      document.getElementById('statRag').textContent = d.rag_count || 0;
-      document.getElementById('statMemory').textContent = d.memory_count || 0;
-      document.getElementById('statLatency').textContent = d.avg_latency_ms || 0;
-    });
+  fetch('/api/stats').then(r => r.json()).then(d => {
+    document.getElementById('statTotal').textContent = d.total || 0;
+    document.getElementById('statAnswer').textContent = (d.by_decision && d.by_decision.answer_directly) || 0;
+    document.getElementById('statTool').textContent = d.tool_count || 0;
+    document.getElementById('statRag').textContent = d.rag_count || 0;
+    document.getElementById('statMemory').textContent = d.memory_count || 0;
+    document.getElementById('statLatency').textContent = d.avg_latency_ms || 0;
+  });
 
   document.getElementById('lastUpdated').textContent = 'Last updated: ' + new Date().toLocaleTimeString();
 }
 
-// Poll every 2 seconds
+function updateKbCount() {
+  fetch('/api/ingest/stats').then(r => r.json()).then(d => {
+    document.getElementById('kbCount').textContent = 'Chroma KB: ' + (d.count || 0) + ' chunks';
+  }).catch(() => {});
+}
+
+function uploadFile(file) {
+  if (!file) return;
+  const formData = new FormData();
+  formData.append('file', file);
+  formData.append('source', file.name);
+  doIngest(formData);
+}
+
+function pasteIngest() {
+  const text = document.getElementById('pasteText').value;
+  const source = document.getElementById('pasteSource').value || 'paste-' + Date.now();
+  if (!text.trim()) return;
+  const formData = new FormData();
+  formData.append('file', new Blob([text], {type: 'text/plain'}), source);
+  formData.append('source', source);
+  doIngest(formData);
+}
+
+function doIngest(formData) {
+  const btn = document.querySelector('.btn-primary');
+  const result = document.getElementById('ingestResult');
+  btn.disabled = true;
+  result.className = 'ingest-result';
+  result.textContent = 'Ingesting...';
+
+  fetch('/api/ingest', { method: 'POST', body: formData })
+    .then(r => r.json())
+    .then(d => {
+      if (d.status === 'ok') {
+        result.className = 'ingest-result ok';
+        result.textContent = `✓ Ingested ${d.chunks} chunks from "${d.source}" (${d.total_chars} chars)`;
+        updateKbCount();
+      } else {
+        result.className = 'ingest-result err';
+        result.textContent = '✗ ' + (d.message || 'Unknown error');
+      }
+    })
+    .catch(e => {
+      result.className = 'ingest-result err';
+      result.textContent = '✗ ' + e.message;
+    })
+    .finally(() => { btn.disabled = false; });
+}
+
+// Drag & drop
+const zone = document.getElementById('uploadZone');
+zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('dragover'); });
+zone.addEventListener('dragleave', () => zone.classList.remove('dragover'));
+zone.addEventListener('drop', e => {
+  e.preventDefault();
+  zone.classList.remove('dragover');
+  uploadFile(e.dataTransfer.files[0]);
+});
+
 setInterval(update, 2000);
 update();
 </script>
@@ -390,12 +620,13 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser(description="Cognitive Core Runtime Dashboard")
     ap.add_argument("--port", type=int, default=8766)
     ap.add_argument("--host", default="0.0.0.0")
-    ap.add_argument("--traces", default=TRACES_PATH,
-                    help="Path to traces JSONL file")
+    ap.add_argument("--traces", default=TRACES_PATH, help="Path to traces JSONL file")
+    ap.add_argument("--chroma-path", default=CHROMA_PATH, help="Path to Chroma DB directory")
     args = ap.parse_args()
 
-    Handler = _handler_class(args.traces)
+    Handler = _handler_class(args.traces, args.chroma_path)
     server = HTTPServer((args.host, args.port), Handler)
-    print(f"Cognitive Core Runtime Dashboard → http://{args.host}:{args.port}")
-    print(f"Watching: {args.traces}")
+    print(f"Cognitive Core Dashboard → http://{args.host}:{args.port}")
+    print(f"  Traces: {args.traces}")
+    print(f"  Chroma: {args.chroma_path}")
     server.serve_forever()
