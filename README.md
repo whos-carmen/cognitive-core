@@ -396,7 +396,14 @@ See [docs/rag-architecture.md](docs/rag-architecture.md) for full details:
 - **Embeddings**: BGE-small-en-v1.5 on CPU (~0.1 GB)
 - **Web ingestion**: Firecrawl (API) or Crawl4AI (local open source)
 - **Data flow**: ingestion pipeline + query path + VRAM budget
-- Complete data flow and VRAM budget
+
+### Interface & Memory
+
+See [docs/interface-and-memory.md](docs/interface-and-memory.md) for:
+- **Web UI**: Open WebUI (self-hosted ChatGPT, connects to any backend)
+- **CLI**: Python readline script (Claude Code-style interactive terminal)
+- **Memory**: Mem0 (pluggable memory layer) or DIY Chroma (no new deps)
+- **Architecture**: full diagram from client → memory → router → RAG
 
 ---
 
