@@ -16,3 +16,4 @@ logs/
 # Sensitive keys
 *.pem
 *.key
+__pycache__/
