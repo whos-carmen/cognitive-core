@@ -252,7 +252,7 @@ git clone https://huggingface.co/GnLOLot/MiniCPM5-1B-Claude-Opus-Fable5-Thinking
 Fast sanity check — blends weights via TIES to see if combining produces acceptable results before committing to training.
 
 ```bash
-pip install mergekit
+uvx pip install mergekit
 
 mergekit-yaml /workspace/configs/merge.yaml /workspace/models/merged --cuda
 ```

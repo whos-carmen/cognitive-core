@@ -75,7 +75,7 @@
 
 3. Run merge
    ```
-   pip install mergekit
+   uvx pip install mergekit
    mergekit-yaml /workspace/configs/merge.yaml /workspace/models/merged --cuda
    ```
 
