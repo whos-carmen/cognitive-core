@@ -63,13 +63,13 @@ The key innovation is OPD — the student generates its own rollouts, and domain
 
 ### Quantization Tradeoffs
 
-| Format | Size | Quality | Speed (7900 XTX) | Notes |
-|---|---|---|---|---|
-| F16 | 2.1 GB | Baseline | Slowest | Only for fine-tuning base |
-| Q8_0 | 1.1 GB | Near-identical | **Fastest (2x F16)** | Memory-bandwidth bound — smaller is faster |
-| Q6_K | 851 MB | Near-identical | Very fast | Best quality-per-byte |
-| Q5_K_M | 751 MB | Very good | Fast | |
-| Q4_K_M | 657 MB | Good | Fast | Minimal footprint |
+| Format | Size | Quality | Notes |
+|---|---|---|---|
+| F16 | 2.1 GB | Baseline | Only for fine-tuning base |
+| Q8_0 | 1.1 GB | Near-identical | **Recommended** — best quality + fastest |
+| Q6_K | 851 MB | Near-identical | Best quality-per-byte |
+| Q5_K_M | 751 MB | Very good | |
+| Q4_K_M | 657 MB | Good | Minimal footprint |
 
 At 1B scale, Q8_0 is both smaller AND faster than F16. The bottleneck is memory bandwidth, not compute — halving the weight size nearly doubles generation speed.
 
@@ -123,66 +123,111 @@ Preserves Claude's thinking patterns while adding aggressive tool-calling behavi
 
 ## Hardware
 
+AWS EC2 g7e.2xlarge (Ubuntu 26.04 AMI)
+
 | Component | Spec |
 |---|---|
-| CPU | AMD Ryzen 9 7900X (12 cores / 24 threads) |
-| GPU | AMD Radeon RX 7900 XTX (24GB VRAM, RDNA 3) |
+| Instance | g7e.2xlarge |
+| CPU | 8 vCPUs (AMD EPYC) |
 | RAM | 64 GB |
-| Host | ESXi 8.0 (unlicensed — 8 vCPU per VM limit) |
-| ML VM | Ubuntu 26.04 LTS, GPU passthrough |
+| GPU | 1x NVIDIA (24GB+ VRAM) |
+| Network | Up to 25 Gbps |
+| Storage | EBS (gp3 or io2) |
 
-### VM Allocation
+### Why This Instance
 
-| Consumer | CPU | RAM | Notes |
-|---|---|---|---|
-| ESXi host | reserve 2-4 threads | 4-8 GB | Hypervisor |
-| Windows Server VM | 4-6 threads | 16-24 GB | Other workloads |
-| **Ubuntu ML VM** | **8 vCPU (unlicensed limit)** | **40 GB (all reserved)** | Training |
-| Buffer | — | ~4 GB | Headroom |
+- 64GB RAM is more than enough — DPO peaks at ~23-28GB
+- 8 vCPUs sufficient — GPU training is not CPU-bound
+- NVIDIA GPU = CUDA = no ROCm quirks, full PyTorch ecosystem support
+- On-demand or spot pricing — spin up for training, shut down when done
 
-8 vCPU is sufficient because GPU training is not CPU-bound — the 7900 XTX does the compute while the CPU only feeds data and handles tokenization.
+### Storage Recommendation
 
-40GB RAM is comfortable — DPO peaks at ~23-28GB, leaving 12-17GB headroom for checkpoint saving spikes.
+| Volume | Size | Purpose |
+|---|---|---|
+| Root | 50 GB | OS + Docker |
+| Data | 200-300 GB (gp3) | Models + training data + checkpoints |
 
 ---
 
 ## Environment Setup
 
-> Full step-by-step guide: [docs/ESXi-Ubuntu-Setup.md](docs/ESXi-Ubuntu-Setup.md)
-
-### Quick Version
-
-1. **BIOS**: Enable SVM + IOMMU
-2. **ESXi**: Enable passthrough for 7900 XTX PCI devices (`1002:744c` + `1002:7444`), reboot host
-3. **Create VM**: Ubuntu 26.04, 8 vCPU, 40GB RAM (all reserved), 200-300GB disk, GPU passed through
-4. **ROCm**: `sudo apt install -y rocm-dev rocm-hip-sdk` (Ubuntu 26.04 ships native ROCm packages)
-5. **GPU arch**: `export HSA_OVERRIDE_GFX_VERSION=11.0.0`
-6. **Docker**: Install Docker, pull `goldengrapegentleman/unsloth-rocm:2026.1.4-rocm7.1-gfx1100`
-7. **Verify**: `python -c "import torch; print(torch.cuda.get_device_name(0))"` → AMD Radeon RX 7900 XTX
-
-### Launch Training Container
+### 1. Launch the Instance
 
 ```bash
+# AWS CLI
+aws ec2 run-instances \
+    --instance-type g7e.2xlarge \
+    --image-id ami-<your-ubuntu-26.04-ami> \
+    --key-name <your-keypair> \
+    --security-group-ids <your-sg> \
+    --block-device-mappings '[{"DeviceName":"/dev/sda1","Ebs":{"VolumeSize":50,"VolumeType":"gp3"}},{"DeviceName":"/dev/sdf","Ebs":{"VolumeSize":250,"VolumeType":"gp3","Iops":3000,"Throughput":125}}]'
+```
+
+### 2. Connect and Setup
+
+```bash
+ssh -i <key>.pem ubuntu@<public-ip>
+
+# Update system
+sudo apt update && sudo apt upgrade -y
+
+# Install NVIDIA drivers + CUDA
+sudo apt install -y nvidia-driver-560 nvidia-utils-560
+# Reboot after driver install
+sudo reboot
+
+# Verify GPU
+nvidia-smi
+# Should show the GPU with VRAM info
+```
+
+### 3. Install Docker + CUDA Support
+
+```bash
+# Docker
+sudo apt install -y docker.io
+sudo systemctl enable docker && sudo systemctl start docker
+sudo usermod -aG docker $USER
+newgrp docker
+
+# NVIDIA Container Toolkit
+sudo apt install -y curl
+curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
+curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | \
+    sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \
+    sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
+sudo apt update
+sudo apt install -y nvidia-container-toolkit
+sudo nvidia-ctk runtime configure --runtime=docker
+sudo systemctl restart docker
+```
+
+### 4. Launch Training Container
+
+```bash
+# Unsloth CUDA image (for NVIDIA GPUs)
+docker pull ghcr.io/unslothai/unsloth:latest-cuda
+
+# Or use the official Unsloth CUDA image
+docker pull ghcr.io/unslothai/unsloth:latest-cuda
+
 docker run -it \
-    --device=/dev/kfd \
-    --device=/dev/dri \
-    --group-add video \
-    --group-add render \
+    --gpus all \
     --shm-size=16g \
-    -v /home/$USER/cognitive-core:/workspace \
-    -e HSA_OVERRIDE_GFX_VERSION=11.0.0 \
-    goldengrapegentleman/unsloth-rocm:2026.1.4-rocm7.1-gfx1100 \
+    -v /home/ubuntu/cognitive-core:/workspace \
+    ghcr.io/unslothai/unsloth:latest-cuda \
     bash
 ```
 
-### Why ESXi + Ubuntu (Not WSL2)
+### 5. Verify Inside Container
 
-| | WSL2 on Windows | ESXi VM |
-|---|---|---|
-| GPU access | Indirect (WSL2 + D3D12) | Direct passthrough |
-| ROCm | Limited, unofficial | Full native packages |
-| Stability | WSL2 quirks | Production-grade |
-| Resources | Shares Windows | Dedicated |
+```bash
+python -c "import torch; print(torch.cuda.is_available()); print(torch.cuda.get_device_name(0))"
+# Expected:
+# True
+# NVIDIA <your GPU>
+```
 
 ---
 
@@ -337,8 +382,7 @@ cognitive-core/
 ├── configs/
 │   ├── merge_test.yaml          # Mergekit TIES config
 │   └── Modelfile                # Ollama deployment
-├── docs/
-│   └── ESXi-Ubuntu-Setup.md     # Full ESXi + GPU passthrough guide
+├── docs/                        # Documentation
 ├── scripts/                     # Training & deployment automation
 └── test_prompts.txt             # 10 evaluation prompts
 ```
@@ -354,7 +398,7 @@ cognitive-core/
 
 **Tools**
 - [mergekit](https://github.com/arcee-ai/mergekit) — weight-space model merging
-- [Unsloth ROCm Docker](https://hub.docker.com/r/goldengrapegentleman/unsloth-rocm) — training on AMD GPUs
+- [Unsloth CUDA Docker](https://hub.docker.com/r/unslothai/unsloth) — training on NVIDIA GPUs
 - [llama.cpp](https://github.com/ggerganov/llama.cpp) — GGUF conversion + inference
 - [Ollama](https://ollama.com) — local deployment
 

@@ -1,4 +1,4 @@
-FROM goldengrapegentleman/unsloth-rocm:2026.1.4-rocm7.1-gfx1100
+FROM ghcr.io/unslothai/unsloth:latest-cuda
 
 # Install as root for /opt/venv access
 USER root

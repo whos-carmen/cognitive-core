@@ -1,5 +1,5 @@
 #!/bin/bash
-# Cognitive Core — Training Container Launcher (bare metal, RX 7900 XTX)
+# Cognitive Core — Training Container Launcher (AWS g7e.2xlarge, NVIDIA GPU)
 # Usage: bash scripts/launch_container.sh [command]
 #
 # If no command given, drops into interactive bash.
@@ -11,15 +11,9 @@ REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
 DOCKER_CMD=(
     docker run -it --rm
-    --device=/dev/kfd
-    --device=/dev/dri/renderD128
-    --device=/dev/dri/card0
-    --group-add 991       # host render GID — NOT 'render' (container GID differs)
-    --group-add video
+    --gpus all
     --shm-size=16g
     -v "${REPO_ROOT}:/workspace"
-    -e HSA_OVERRIDE_GFX_VERSION=11.0.0
-    -e HIP_VISIBLE_DEVICES=0
     -w /workspace
     cognitive-core:latest
 )

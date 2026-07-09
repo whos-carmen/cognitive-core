@@ -96,21 +96,16 @@
   <pre>bash scripts/launch_container.sh</pre>
   <p>Or manually:</p>
   <pre>docker run -it --rm \
-  --device=/dev/kfd \
-  --device=/dev/dri/renderD128 \
-  --device=/dev/dri/card0 \
-  --group-add 991 \
-  --group-add video \
+  --gpus all \
   --shm-size=16g \
-  -v /home/pixie/cognitive-core:/workspace \
-  -e HSA_OVERRIDE_GFX_VERSION=11.0.0 \
+  -v /home/ubuntu/cognitive-core:/workspace \
   -w /workspace \
   cognitive-core:latest \
   bash</pre>
   <hr class="hline">
   <p>Inside the container, verify GPU:</p>
   <pre>python -c "import torch; print(torch.cuda.get_device_name(0))"
-# → Radeon RX 7900 XTX</pre>
+# → NVIDIA GPU</pre>
 </div>
 
 <div class="card">
@@ -169,7 +164,7 @@
   <pre>tail -f /workspace/models/logs/sft.log</pre>
 
   <p style="margin-top: .5rem;">Check GPU utilization:</p>
-  <pre>watch -n 1 rocm-smi</pre>
+  <pre>watch -n 1 nvidia-smi</pre>
 </div>
 
 <div class="card">

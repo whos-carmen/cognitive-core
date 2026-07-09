@@ -32,31 +32,29 @@ def parse_metrics(path, last_n=50):
     return entries[-last_n:]
 
 def get_gpu_info():
-    """Get GPU utilization from rocm-smi (concise table format)."""
+    """Get GPU utilization from nvidia-smi."""
     try:
         out = subprocess.run(
-            ["rocm-smi"],
+            ["nvidia-smi", "--query-gpu=name,temperature.gpu,utilization.gpu,memory.used,memory.total,power.draw", "--format=csv,noheader,nounits"],
             capture_output=True, text=True, timeout=5
         ).stdout
-        lines = out.strip().split("\n")
         devices = []
-        for line in lines:
-            parts = line.strip().split()
-            if len(parts) >= 9 and parts[0].isdigit():
+        for line in out.strip().split("\n"):
+            parts = [p.strip() for p in line.split(",")]
+            if len(parts) >= 6:
                 devices.append({
-                    "id": parts[0],
-                    "name": f"Device {parts[0]}",
-                    "temp": parts[4],
+                    "name": parts[0],
+                    "temp": parts[1],
+                    "gpu_usage": parts[2],
+                    "vram_used": parts[3],
+                    "vram_total": parts[4],
                     "power": parts[5],
-                    "vram_used": parts[14].replace("%",""),
-                    "gpu_usage": parts[15].replace("%",""),
                 })
         if not devices:
-            # fallback: try rocminfo
-            return [{"name": "RX 7900 XTX", "temp": "?", "vram_used": "?", "vram_total": "?", "gpu_usage": "?", "power": "?"}]
+            return [{"name": "GPU", "temp": "?", "vram_used": "?", "vram_total": "?", "gpu_usage": "?", "power": "?"}]
         return devices
     except:
-        return [{"name": "RX 7900 XTX", "temp": "?", "vram_used": "?", "vram_total": "?", "gpu_usage": "?", "power": "?"}]
+        return [{"name": "GPU", "temp": "?", "vram_used": "?", "vram_total": "?", "gpu_usage": "?", "power": "?"}]
 
 def find_checkpoints():
     """Find training checkpoints."""
