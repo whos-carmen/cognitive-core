@@ -253,6 +253,12 @@ then move to Mem0 if you need better retrieval quality.
 
 ---
 
+## Runtime Observability Dashboard
+
+The cognitive core logs every routing decision, RAG query, tool call, and
+memory access as structured JSONL. The runtime dashboard reads this log and
+displays it in real-time.
+
 ## Putting It All Together
 
 ```

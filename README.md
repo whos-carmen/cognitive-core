@@ -403,6 +403,8 @@ See [docs/interface-and-memory.md](docs/interface-and-memory.md) for:
 - **Web UI**: Open WebUI (self-hosted ChatGPT, connects to any backend)
 - **CLI**: Python readline script (Claude Code-style interactive terminal)
 - **Memory**: Mem0 (pluggable memory layer) or DIY Chroma (no new deps)
+- **Runtime dashboard**: `scripts/runtime_dashboard.py` — see every routing decision,
+  RAG query, tool call, and memory access in real-time
 - **Architecture**: full diagram from client → memory → router → RAG
 
 ---
