@@ -25,48 +25,64 @@ are needed — most requests never reach it.
 
 ---
 
-## Serving Layer (Undecided)
+## Serving Layer — Recommendation: SGLang + llama.cpp Backup
 
-Three options for running both models on the 7900 XTX (24 GB VRAM):
+### Why SGLang for MiniCPM5
 
-### llama.cpp
-- Lightest, single binary, no Python runtime needed
-- Built-in HTTP server with OpenAI-compatible API
-- Handles model swapping / concurrent GPU access natively
-- Downside: no support for tool/function calling as plugins (custom format needed)
+SGLang is the **recommended backend** by the OpenBMB team for MiniCPM5. The reason is
+specific: MiniCPM5 emits tool calls in XML format (`<tool_call>...</tool_call>`),
+and SGLang has a **native parser** (`--tool-call-parser minicpm5`) that converts
+them to standard OpenAI-compatible tool_calls automatically. Neither llama.cpp
+nor Ollama has this parser — you'd need to handle the XML format yourself.
 
-### Ollama
-- Wraps llama.cpp with a nicer API, model management,
-  and built-in OpenAI-compatible endpoint
-- `ollama pull model` then `ollama run`
-- Supports tool calling via OpenAI-compatible chat API
-- Downside: one more layer of abstraction
+Other SGLang advantages:
+- **RadixAttention prefix cache** — reuses KV cache across requests with
+  shared prefixes, reducing latency and memory by ~30-50% for multi-turn
+- **Highest token throughput** in 2025-2026 benchmarks vs vLLM, TGI, Ollama
+- **OpenAI-compatible API** — works with any client
 
-### SGLang
-- Best multi-model serving, native OpenAI-compatible API
-- Native tool-calling parser for MiniCPM5 (`--tool-call-parser minicpm5`)
-- More memory-efficient with RadixAttention prefix caching
-- Downside: requires Python, more complex to set up
+### The Catch
 
-### Current Thinking
+The `--tool-call-parser minicpm5` feature requires a **SGLang build newer than
+the latest pip release** as of June 2026. Plain chat completions work fine on the
+pip release — but tool parsing needs a `pip install` from the main branch or the
+official Docker image.
 
-Factor | llama.cpp | Ollama | SGLang
----|---|---|---
-Setup complexity | Low | Low | Medium
-Tool calling | Manual format | OpenAI-compatible | Native MiniCPM5 parser
-Multi-model | Multiple servers | Single server manages | Native support
-Documentation | Extensive | Extensive | Growing
-Python required | No | No | Yes
+### Alternative: llama.cpp (Simplicity Pick)
 
-The final choice doesn't affect the rest of the architecture — all three expose
-an OpenAI-compatible API, which is what the router and RAG pipeline talk to.
+If you don't need tool-call parsing (you handle the XML yourself or use a
+custom format), llama.cpp is:
+- Single binary, no Python runtime
+- GPU-first, handles model swapping
+- Easy to run multiple servers on different ports
+
+Ollama sits between them — wrapping llama.cpp with nicer model management
+but adding a layer of abstraction.
+
+### Recommendation
+
+| If you... | Pick |
+|---|---|
+| Want native tool parsing for MiniCPM5 | **SGLang** (build from main branch) |
+| Want simplicity, don't mind XML handling | **llama.cpp** (two servers) |
+| Want the nicest dev experience | **Ollama** |
+
+All three expose an OpenAI-compatible API, so the choice doesn't affect the
+RAG pipeline. Switch later if needed.
+
+### Layout
+
+```
+Port 8081 — SGLang server serving MiniCPM5-1B (router)
+Port 8082 — llama.cpp/Ollama/SGLang serving RAG model (knowledge)
+```
 
 VRAM fits both models simultaneously:
 
 | Model | Quant | VRAM | Port | Role |
 |---|---|---|---|---|
-| MiniCPM5-1B | Q8_0 (~1.1 GB) | port 8081 | Router |
-| RAG model (7-8B) | Q4_K_M (~5.5 GB) | port 8082 | Knowledge Q&A |
+| MiniCPM5-1B | Q8_0 (~1.1 GB) | 8081 | Router |
+| RAG model (7-8B) | Q4_K_M (~5.5 GB) | 8082 | Knowledge Q&A |
 | **Total** | | **~6.6 GB** | out of 24 available |
 
 ---
@@ -104,21 +120,34 @@ Alternative: **GTE-small** — slightly better but larger.
 
 ---
 
-## Vector DB (Undecided)
+## Vector DB — Recommendation: Chroma, with Option to Switch
 
-A vector database stores document chunks and finds the most relevant ones
-for a given question using vector similarity search.
+### Why Chroma for a Personal Project
 
-| Option | Type | Setup | Why |
-|---|---|---|---|
-| **Chroma** | Embedded (in-process) | `pip install chromadb` | Simplest — no server, file-based |
-| **Qdrant** | Local server or cloud | Docker container | Scales better, has filtering |
-| **LanceDB** | Embedded | `pip install lancedb` | Uses Lance columnar format, fast |
-| **Pinecone** | Cloud | API key | Managed, no ops — but data leaves your machine |
+| Factor | Chroma | Qdrant | LanceDB | Pinecone |
+|---|---|---|---|---|
+| Setup | `pip install chromadb` | Docker container | `pip install lancedb` | API key + cloud account |
+| Server needed | No (in-process) | Yes | No (in-process) | Yes (cloud) |
+| Data leaves machine | No | No | No | Yes |
+| Cost | Free | Free (self-host) | Free | Pay per use |
+| Scales to | Small-medium | Large | Medium | Large |
+| Filters/metadata | Basic | Advanced | Basic | Advanced |
 
-For a personal project on the same machine: **Chroma** is the simplest path.
-If you want to learn a production-grade tool: **Qdrant**.
+**Chroma is the right starting point because:**
+1. No server to run — `import chromadb` and it works
+2. Persists to disk as files — easy to back up, move, reset
+3. Good enough for thousands of documents at personal scale
+4. If you outgrow it, switching to Qdrant or LanceDB is straightforward
+   (they all speak the same API patterns)
 
+### Switch Path
+
+If Chroma becomes too slow or you want metadata filtering:
+```
+Chroma → Qdrant (Docker, same API style, better filtering)
+Chroma → LanceDB (same in-process style, columnar storage, faster at scale)
+```
+No need to decide today. Start with Chroma, switch later if needed.
 ---
 
 ## Document Ingestion (Firecrawl)

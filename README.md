@@ -390,11 +390,12 @@ The cognitive core routes knowledge questions to a RAG pipeline — a separate m
 questions based on document context while the router decides when to use it.
 
 See [docs/rag-architecture.md](docs/rag-architecture.md) for full details:
-- Serving layer comparison (llama.cpp / Ollama / SGLang)
-- RAG model options (Llama-3.1-8B, Qwen2.5-7B, Gemma-2-9B)
-- Embedding models (CPU-based, tiny)
-- Vector DB options (Chroma, Qdrant, LanceDB, Pinecone)
-- Document ingestion with Firecrawl or Crawl4AI
+- **Serving layer**: SGLang recommended (native MiniCPM5 tool parser), llama.cpp as simpler backup
+- **Vector DB**: Chroma recommended (no server needed, in-process), Qdrant as upgrade path
+- **RAG model**: Llama-3.1-8B, Qwen2.5-7B, or Gemma-2-9B at Q4_K_M (~5.5 GB)
+- **Embeddings**: BGE-small-en-v1.5 on CPU (~0.1 GB)
+- **Web ingestion**: Firecrawl (API) or Crawl4AI (local open source)
+- **Data flow**: ingestion pipeline + query path + VRAM budget
 - Complete data flow and VRAM budget
 
 ---
