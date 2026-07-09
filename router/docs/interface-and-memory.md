@@ -56,13 +56,63 @@ docker run -d \
 | Interface | Best For | Why Not Primary |
 |---|---|---|
 | **Open WebUI** | General chat, RAG, history | — |
+| **pi.dev** | Terminal-first agentic harness | Terminal-only, no web UI |
 | **Continue.dev** | VS Code inline AI | IDE-only, not general chat |
-| **ShellGPT (sgpt)** | Terminal commands | No web UI, no history UI |
-| **Custom Streamlit/Gradio** | Full control | Need to build everything |
+| **Custom CLI** | Scripted/automated access | No UI by definition |
 
 ---
 
-## CLI Interface
+## pi.dev Agent
+
+[pi.dev](https://pi.dev) is a terminal-first agent harness that connects to any
+LLM backend via its OpenAI-compatible API. It handles the agent loop, tool
+execution, session persistence, and TUI, and is extensible via packages.
+
+**Connection:**
+
+```bash
+pi connect http://localhost:8081/v1
+pi "What does the cognitive core do?"
+```
+
+**How the split works:**
+
+| Layer | pi.dev | Cognitive Core |
+|---|---|---|
+| Agent loop | ✅ | — |
+| Tool execution | ✅ (built-in tools) | — |
+| Routing decisions | — | ✅ MiniCPM5 |
+| Memory (tool-based) | — | ✅ memory_store/recall |
+| RAG | — | ✅ Chroma + Llama-3.1-8B |
+| TUI / terminal UI | ✅ | — |
+| Session persistence | ✅ JSONL files | — |
+
+**Custom tools:**
+
+Expose the cognitive core's tools as a pi package:
+
+```bash
+pi package init cognitive-core-tools
+```
+
+```python
+# cognitive-core-tools/tools.py
+def memory_store(fact: str):
+    """Save a fact for future conversations."""
+    ...
+
+def memory_recall(query: str) -> str:
+    """Recall relevant past context."""
+    ...
+
+def query_rag(question: str) -> str:
+    """Query the RAG pipeline."""
+    ...
+```
+
+---
+
+## Custom CLI
 
 For a Claude Code-style terminal experience, the model servers already expose
 an OpenAI-compatible API. A simple CLI wrapper using the Python API client:
