@@ -28,7 +28,8 @@ User / client (Runtime Dashboard, pi.dev, custom CLI)
     │  Code tools:        code_run / shell_exec          │
     │  ├─ Answer directly → return response              │
     │  ├─ Tool call       → execute locally              │
-    │  ├─ RAG             → query Chroma (port 8082)     │
+    │  ├─ RAG             → query Chroma +               │
+    │  │                    Llama-3.1-8B (port 8082)     │
     │  └─ Delegate        → ask cloud oracle             │
     └────────────────────┬───────────────────────────────┘
                          │
