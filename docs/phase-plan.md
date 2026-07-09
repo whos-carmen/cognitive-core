@@ -95,7 +95,7 @@
 
 ### Config: g7e.2xlarge Training Settings
 
-The g7e.2xlarge GPU has ~24-48 GB VRAM. For a 1B model at BF16:
+The g7e.2xlarge GPU is an NVIDIA RTX 6000 (48 GB VRAM). For a 1B model at BF16:
 
 | Setting | Value | Why |
 |---|---|---|

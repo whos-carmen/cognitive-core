@@ -130,7 +130,7 @@ AWS EC2 g7e.2xlarge (Ubuntu 26.04 AMI)
 | Instance | g7e.2xlarge |
 | CPU | 8 vCPUs (AMD EPYC) |
 | RAM | 64 GB |
-| GPU | 1x NVIDIA (24GB+ VRAM) |
+| GPU | 1x NVIDIA RTX 6000 (48 GB VRAM) |
 | Network | Up to 25 Gbps |
 | Storage | EBS (gp3 or io2) |
 
@@ -306,7 +306,7 @@ python code/train/dpo.py \
 
 Shows the model its own tool-calling successes and failures. Rewards acting (emitting tool calls) over stalling (reasoning about whether to act).
 
-**Time**: ~2-4 hours. **VRAM**: ~18-22 GB (tight — if OOM, reduce `--accum` to 4).
+**Time**: ~2-4 hours. **VRAM**: ~18-22 GB (comfortable fit on RTX 6000 48GB).
 
 ---
 
