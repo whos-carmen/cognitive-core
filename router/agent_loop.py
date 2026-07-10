@@ -243,7 +243,7 @@ class Agent:
                 is_refusal = any(kw in reasoning.lower() or kw in content.lower()
                                for kw in refusal_keywords)
 
-                if is_refusal and turn == 0:
+                if is_refusal:
                     # Try RAG (Chroma + Granite) first
                     rag_answer = self._query_rag(prompt)
                     if rag_answer and "not have enough information" not in rag_answer.lower():
