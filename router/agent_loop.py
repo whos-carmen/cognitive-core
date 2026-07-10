@@ -157,6 +157,7 @@ class Agent:
         self.mcp = MCPManager(config_path)
         self.tool_mappings = {}
         self._session_history = []
+        self._reranker = None  # lazy-loaded
 
     async def start(self):
         print("Connecting to MCP servers...")
@@ -275,13 +276,40 @@ class Agent:
         # Max turns reached — return last response
         return "Max tool call turns reached."
 
+    def _get_reranker(self):
+        """Lazy-load the LlamaNemotron reranker on first use."""
+        if self._reranker is None:
+            from transformers import AutoModelForSequenceClassification, AutoTokenizer
+            import torch
+            model_id = "nvidia/llama-nemotron-rerank-1b-v2"
+            tok = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
+            model = AutoModelForSequenceClassification.from_pretrained(
+                model_id, torch_dtype=torch.float16, device_map="cuda:0",
+                trust_remote_code=True,
+            )
+            model.eval()
+            self._reranker = (model, tok)
+        return self._reranker
+
+    def _rerank(self, query: str, docs: list[str]) -> list[int]:
+        """Return indices of docs sorted by relevance (highest first)."""
+        model, tokenizer = self._get_reranker()
+        import torch
+        pairs = [[query, d[:500]] for d in docs]
+        inputs = tokenizer(pairs, padding=True, truncation=True, max_length=512, return_tensors="pt").to("cuda:0")
+        with torch.no_grad():
+            scores = model(**inputs).logits.squeeze(-1).cpu().float().tolist()
+        if isinstance(scores, float):
+            scores = [scores]
+        return sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)
+
     def _query_rag(self, question: str, n_results: int = 5) -> str | None:
-        """Query Chroma + Granite RAG model. Returns answer or None if KB empty."""
+        """Query Chroma + reranker + Granite RAG model. Returns answer or None."""
         try:
             from sentence_transformers import SentenceTransformer
             import chromadb
 
-            model = SentenceTransformer("ibm-granite/granite-embedding-english-r2")
+            embed_model = SentenceTransformer("ibm-granite/granite-embedding-english-r2")
             db = chromadb.PersistentClient(path=CHROMA_PATH)
             collection = db.get_or_create_collection("knowledge")
 
@@ -289,16 +317,22 @@ class Agent:
             if total == 0:
                 return None
 
-            q_emb = model.encode([question], normalize_embeddings=True).tolist()[0]
+            # Retrieve more chunks (15) for reranking
+            q_emb = embed_model.encode([question], normalize_embeddings=True).tolist()[0]
             results = collection.query(
                 query_embeddings=[q_emb],
-                n_results=min(n_results, total),
+                n_results=min(15, total),
             )
 
             docs = results.get("documents", [[]])[0]
             metas = results.get("metadatas", [[]])[0]
             if not docs:
                 return None
+
+            # Rerank with LlamaNemotron, keep top n_results
+            indices = self._rerank(question, docs)[:n_results]
+            docs = [docs[i] for i in indices]
+            metas = [metas[i] if metas else None for i in indices]
 
             context = "\n\n---\n\n".join(
                 f"[Source: {m.get('source','?') if m else '?'}]\n{d}"
