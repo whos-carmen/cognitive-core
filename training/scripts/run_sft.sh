@@ -68,7 +68,7 @@ fi
 
 echo "Preset: $GPU_PRESET (max_len=$MAX_LEN, accum=$ACCUM, bsz=$BSZ)"
 
-DOCKER_CMD=(docker run -it --rm --gpus all --shm-size=16g
+DOCKER_CMD=(docker run -it --rm --gpus all --shm-size=16g --entrypoint bash
     -v "${REPO_ROOT}:/workspace" -e TOKENIZERS_PARALLELISM=false
     -w /workspace cognitive-core:latest)
 
@@ -78,13 +78,13 @@ bash "${SCRIPTS_DIR}/sync_checkpoints.sh" pull 2>/dev/null || echo "S3 sync skip
 
 case "$MODE" in
   smoke)
-    CMD="python /workspace/training/code/train/sft.py --model /workspace/models/merged --train_file /workspace/dataset/train_v4.jsonl --out /workspace/train/outputs/sft_smoke --max_steps 5 --bsz 1 --accum 1 --max_len 4096 --train_cap 4096"
+    CMD="python /workspace/code/train/sft.py --model /workspace/models/merged --train_file /workspace/dataset/train_v4.jsonl --out /workspace/train/outputs/sft_smoke --max_steps 5 --bsz 1 --accum 1 --max_len 4096 --train_cap 4096"
     ;;
   full)
-    CMD="python /workspace/training/code/train/sft.py --model /workspace/models/merged --train_file /workspace/dataset/train_v4.jsonl --out /workspace/train/outputs/sft_claude_agent --epochs 3 --neftune ${NEFTUNE} --bsz ${BSZ} --accum ${ACCUM} --lr ${LR} --lr_scheduler cosine --warmup_ratio 0.05 --weight_decay 0.01 --max_grad_norm 1.0 --max_len ${MAX_LEN} --train_cap ${TRAIN_CAP} --seed 42"
+    CMD="python /workspace/code/train/sft.py --model /workspace/models/merged --train_file /workspace/dataset/train_v4.jsonl --out /workspace/train/outputs/sft_claude_agent --epochs 3 --neftune ${NEFTUNE} --bsz ${BSZ} --accum ${ACCUM} --lr ${LR} --lr_scheduler cosine --warmup_ratio 0.05 --weight_decay 0.01 --max_grad_norm 1.0 --max_len ${MAX_LEN} --train_cap ${TRAIN_CAP} --seed 42"
     ;;
   dpo)
-    CMD="python /workspace/training/code/train/dpo.py --model /workspace/train/outputs/sft_claude_agent --data /workspace/dataset/dpo_onpolicy_v4.jsonl --out /workspace/train/outputs/final-cognitive-core --beta 0.1 --lr 1e-6 --lr_scheduler cosine --warmup_ratio 0.05 --weight_decay 0.01 --max_grad_norm 1.0 --epochs 3 --accum 8 --seed 42"
+    CMD="python /workspace/code/train/dpo.py --model /workspace/train/outputs/sft_claude_agent --data /workspace/dataset/dpo_onpolicy_v4.jsonl --out /workspace/train/outputs/final-cognitive-core --beta 0.1 --lr 1e-6 --lr_scheduler cosine --warmup_ratio 0.05 --weight_decay 0.01 --max_grad_norm 1.0 --epochs 3 --accum 8 --seed 42"
     ;;
   monitor)
     exec tail -f "${REPO_ROOT}/train/logs/sft.log"
@@ -111,8 +111,7 @@ if [ "$BACKGROUND" = true ]; then
         exit 0
     fi
     mkdir -p "${REPO_ROOT}/train/logs"
-    tmux new-session -d -s "$SESSION" \
-        "docker run --rm --gpus all --shm-size=16g -v ${REPO_ROOT}:/workspace -e TOKENIZERS_PARALLELISM=false -w /workspace cognitive-core:latest bash -c '${CMD} 2>&1 | tee /workspace/train/logs/${MODE}.log; echo DONE > /workspace/train/logs/${MODE}_DONE'"
+    tmux new-session -d -s "$SESSION" "bash ${SCRIPTS_DIR}/run_bg.sh ${REPO_ROOT} ${MODE} ${CMD}"
     echo "=== Running $MODE in tmux session: $SESSION ==="
     echo "  Attach:   tmux attach -t $SESSION"
     echo "  Logs:     tail -f ${REPO_ROOT}/train/logs/${MODE}.log"
