@@ -644,13 +644,14 @@ class Agent:
                 cat_lines = []
                 for cat, items in sorted(categories.items()):
                     total = sum(c for _, c in items)
-                    cat_lines.append(f"  {cat}: {total} chunks ({len(items)} sources)")
+                    cat_lines.append(f"  {cat}: {total} chunks ({len(items)} source" + ("s" if len(items) != 1 else "") + ")")
                 # Top 8 sources detail
                 top_src = sorted(sources.items(), key=lambda x: -x[1])[:8]
-                src_detail = ", ".join(f"{s}={c}" for s, c in top_src)
+                src_detail = "\n  ├─ ".join(f"{s}: {c}" for s, c in top_src)
                 if total_sources > 8:
-                    src_detail += f" ... and {total_sources - 8} more"
-                return f"KB: {count} chunks, {total_sources} sources\nCategories:\n" + "\n".join(cat_lines) + f"\nTop sources: {src_detail}"
+                    src_detail += f"\n  └─ ... and {total_sources - 8} more"
+                cat_block = "\n".join(cat_lines)
+                return f"KB: {count} chunks, {total_sources} sources\n\nCategories:\n{cat_block}\n\nSources:\n  ├─ {src_detail}"
             except Exception as e:
                 return f"Error: {e}"
 
