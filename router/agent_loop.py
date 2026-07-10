@@ -22,6 +22,8 @@ from openai import OpenAI
 CONFIG_PATH = os.path.join(os.path.dirname(__file__), "tools_config.json")
 TRACES_PATH = "/var/log/cognitive-core/traces.jsonl"
 ROUTER_URL = "http://localhost:8081/v1"
+RAG_URL = "http://localhost:8082/v1"
+CHROMA_PATH = os.path.join(os.path.dirname(__file__), "chroma_db")
 
 # Suppress torchao noise
 os.environ["TORCHCODEC_DISABLE"] = "1"
@@ -207,7 +209,13 @@ class Agent:
                                for kw in refusal_keywords)
 
                 if is_refusal and turn == 0:
-                    # Force tool use: tell the model to search the web
+                    # Try RAG (Chroma + Granite) first
+                    rag_answer = self._query_rag(prompt)
+                    if rag_answer and "not have enough information" not in rag_answer.lower():
+                        self._write_trace(prompt, "needs_knowledge", rag_answer)
+                        return rag_answer
+
+                    # RAG didn't have it → force web search
                     messages.append({
                         "role": "user",
                         "content": f"Please use the web_search tool to find information about this question. Search the web for: {prompt}"
@@ -261,6 +269,52 @@ class Agent:
 
         # Max turns reached — return last response
         return "Max tool call turns reached."
+
+    def _query_rag(self, question: str, n_results: int = 5) -> str | None:
+        """Query Chroma + Granite RAG model. Returns answer or None if KB empty."""
+        try:
+            from sentence_transformers import SentenceTransformer
+            import chromadb
+
+            model = SentenceTransformer("ibm-granite/granite-embedding-english-r2")
+            db = chromadb.PersistentClient(path=CHROMA_PATH)
+            collection = db.get_or_create_collection("knowledge")
+
+            total = collection.count()
+            if total == 0:
+                return None
+
+            q_emb = model.encode([question], normalize_embeddings=True).tolist()[0]
+            results = collection.query(
+                query_embeddings=[q_emb],
+                n_results=min(n_results, total),
+            )
+
+            docs = results.get("documents", [[]])[0]
+            metas = results.get("metadatas", [[]])[0]
+            if not docs:
+                return None
+
+            context = "\n\n---\n\n".join(
+                f"[Source: {m.get('source','?') if m else '?'}]\n{d}"
+                for d, m in zip(docs, metas)
+            )
+
+            rag_system = "You are a knowledge assistant. Answer based ONLY on the context below. If the context doesn't contain the answer, say 'I don't have enough information to answer that.'"
+
+            client = OpenAI(base_url=RAG_URL, api_key="not-needed")
+            response = client.chat.completions.create(
+                model="granite",
+                messages=[
+                    {"role": "system", "content": rag_system},
+                    {"role": "user", "content": f"Context:\n{context}\n\nQuestion: {question}"},
+                ],
+                max_tokens=400,
+            )
+            return response.choices[0].message.content
+        except Exception as e:
+            print(f"  RAG error: {e}")
+            return None
 
     def _write_trace(self, prompt, decision, content=None, reasoning=None):
         trace = {
