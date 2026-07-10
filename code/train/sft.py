@@ -37,7 +37,7 @@ def main():
     ap.add_argument("--lr", type=float, default=1e-5)
     ap.add_argument("--max_steps", type=int, default=-1)  # >0 = smoke test
     ap.add_argument("--train_cap", type=int, default=12288)
-ap.add_argument("--pretokenized", type=str, default=None, help="Path to pre-tokenized dataset (skips tokenization)")  # drop examples longer than this (VRAM: logits=L*vocab)
+    ap.add_argument("--pretokenized", type=str, default=None, help="Path to pre-tokenized dataset (skips tokenization)")  # drop examples longer than this (VRAM: logits=L*vocab)
     ap.add_argument("--model", default=os.path.join(PROJ, "model", "final"))
     ap.add_argument("--out", default=os.path.join(PROJ, "train", "outputs", "sft"))
     ap.add_argument("--train_file", default=os.path.join(PROJ, "data", "built", "train.jsonl"))  # override for SFT-v2 (e.g. retail-dropped mix)
