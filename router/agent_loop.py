@@ -363,6 +363,40 @@ class Agent:
                 else:
                     # Local-first: check local files before web search
                     if tool_name in ("web_search", "tavily_search"):
+                        # Ask agent model what tool to use before defaulting to web search
+                        if self._agent_cfg.get("enabled"):
+                            agent_advice = self._query_agent(f"The user asked: {prompt}\nWhich tool should be used? Options: rag_query (for project knowledge), web_search (for current events/web info), file_search (for finding files), shell_exec (for bash commands). Reply with just the tool name and parameters in XML format: <function name=\"tool\"><param name=\"param\">value</param></function>")
+                            if agent_advice and "<function" in agent_advice:
+                                if on_token:
+                                    on_token("reasoning", "\n[agent model recommended a different tool]\n")
+                                agent_calls = parse_tool_calls(agent_advice)
+                                if agent_calls:
+                                    new_name = agent_calls[0]["name"]
+                                    new_params = agent_calls[0]["parameters"]
+                                    # Re-lookup the mapping and execute
+                                    new_map = self.tool_mappings.get(new_name)
+                                    if new_map:
+                                        if new_map.get("type") == "builtin":
+                                            result = self._exec_builtin(new_name, new_params, new_map)
+                                            if on_token:
+                                                on_token("content", str(result)[:2000])
+                                            self._write_trace(prompt, f"tool_call:{new_name}", str(result)[:200])
+                                            self._write_log(TOOLS_LOG, {"timestamp": str(datetime.now()), "tool": new_name, "parameters": new_params, "result_snippet": str(result)[:200]})
+                                            return str(result)
+                                        else:
+                                            # Route to MCP
+                                            mcp_params = {}
+                                            for mk, mv in new_map.get("param_mapping", {}).items():
+                                                if mk in new_params:
+                                                    mcp_params[mv] = new_params[mk]
+                                            for k, v in new_map.get("default_params", {}).items():
+                                                if k not in mcp_params:
+                                                    mcp_params[k] = v
+                                            result = await self.mcp.call_tool(new_map["mcp_server"], new_map["mcp_tool"], mcp_params)
+                                            synthesis = self._synthesize(prompt, result, on_token)
+                                            self._write_trace(prompt, f"tool_call:{new_name}", str(result)[:200])
+                                            self._write_log(TOOLS_LOG, {"timestamp": str(datetime.now()), "tool": new_name, "parameters": new_params, "result_snippet": str(result)[:200]})
+                                            return synthesis
                         local_hit = self._quick_local_search(prompt)
                         if local_hit and "No files" not in local_hit:
                             if on_token:
@@ -459,9 +493,13 @@ class Agent:
             client = OpenAI(base_url=self._agent_cfg["url"], api_key=self._agent_cfg.get("api_key", "not-needed"))
             model = self._agent_cfg.get("model") or None
             response = client.chat.completions.create(
-                model=model, messages=[{"role": "user", "content": prompt}], max_tokens=300,
+                model=model, messages=[{"role": "user", "content": prompt}], max_tokens=500,
             )
-            return response.choices[0].message.content
+            msg = response.choices[0].message
+            content = msg.content or ""
+            reasoning = msg.reasoning_content or ""
+            full = (content + reasoning) if content else reasoning
+            return full[:1000] or None
         except Exception as e:
             print(f"  Agent model error: {e}")
             return None

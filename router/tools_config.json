@@ -15,10 +15,10 @@
   },
 
   "agent_model": {
-    "description": "Optional small model specialized for tool generation. Used when the router fails to generate correct tool calls.",
-    "enabled": false,
+    "description": "Small model specialized for tool/bash generation. Used when the router fails to generate correct tool calls.",
+    "enabled": true,
     "url": "http://localhost:8083/v1",
-    "model": "",
+    "model": "qwen3.5-4b",
     "api_key": "not-needed"
   },
 
