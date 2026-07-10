@@ -197,9 +197,27 @@ class Agent:
             calls = parse_tool_calls(full_text)
 
             if not calls:
-                # No more tool calls → this is the final answer
-                self._write_trace(prompt, "answer_directly", content, reasoning)
-                return content
+                # Check if the model refused or speculated (didn't use tools when it should)
+                refusal_keywords = [
+                    "i don't have access", "i cannot", "i apologize",
+                    "i'm unable", "i am unable", "can't answer", "don't have",
+                    "not have access", "no access", "cannot answer",
+                ]
+                is_refusal = any(kw in reasoning.lower() or kw in content.lower()
+                               for kw in refusal_keywords)
+
+                if is_refusal and turn == 0:
+                    # Force tool use: tell the model to search the web
+                    messages.append({
+                        "role": "user",
+                        "content": f"Please use the web_search tool to find information about this question. Search the web for: {prompt}"
+                    })
+                    continue
+
+                # No tool calls and not a refusal → this is the final answer
+                answer = content if content.strip() else reasoning.strip() or "(no response)"
+                self._write_trace(prompt, "answer_directly", answer, reasoning)
+                return answer
 
             # ── Execute tool calls ──
             for call in calls:
