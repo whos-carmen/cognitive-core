@@ -616,19 +616,17 @@ class Agent:
                 collection = db.get_or_create_collection("knowledge")
                 count = collection.count()
                 if count == 0:
-                    return "Knowledge base is empty."
-                samples = collection.peek()
+                    return "Knowledge base is empty. Ingest documents with: python rag_pipeline.py ingest <path>"
+                # Get all chunks to build a meaningful summary
+                all_data = collection.get()
                 sources = {}
-                for meta in (samples.get("metadatas") or []):
+                for meta in (all_data.get("metadatas") or []):
                     if meta and "source" in meta:
                         s = meta["source"]
                         sources[s] = sources.get(s, 0) + 1
-                src_list = "\n".join(f"  {k}: {v} chunks" for k, v in sorted(sources.items(), key=lambda x: -x[1])[:10])
-                sample_preview = ""
-                docs = samples.get("documents") or []
-                if docs:
-                    sample_preview = f"\nSample entries:\n" + "\n---\n".join(d[:100] for d in docs[:2])
-                return f"Knowledge base: {count} total chunks\nSources:\n{src_list}\n{sample_preview}"
+                total_sources = len(sources)
+                src_list = "\n".join(f"  {k}: {v} chunks" for k, v in sorted(sources.items(), key=lambda x: -x[1])[:15])
+                return f"Knowledge base: {count} chunks across {total_sources} sources\nSources:\n{src_list}\n\nTo add more: python rag_pipeline.py ingest <file_or_dir> --source-name <name>"
             except Exception as e:
                 return f"Error querying knowledge base: {e}"
 
