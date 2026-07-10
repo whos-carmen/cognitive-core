@@ -33,3 +33,4 @@ train/outputs/
 # Checkpoints
 checkpoints/
 router/chroma_db/
+code/.hfcache/
