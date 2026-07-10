@@ -61,7 +61,7 @@ for k in ['max_len','train_cap','accum','neftune','lr','bsz']:
     print(f'{k.upper()}={val}')
 print(p['notes'])
 " 2>/dev/null)
-    eval "$PRESET_DATA"
+    eval "$(echo "$PRESET_DATA" | grep -E "^[A-Z_]+=")"
 else
     MAX_LEN=16384; TRAIN_CAP=16384; ACCUM=24; NEFTUNE=5; LR=1e-5; BSZ=1
 fi
