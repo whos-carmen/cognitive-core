@@ -24,6 +24,9 @@ TRACES_PATH = "/var/log/cognitive-core/traces.jsonl"
 ROUTER_URL = "http://localhost:8081/v1"
 RAG_URL = "http://localhost:8082/v1"
 CHROMA_PATH = os.path.join(os.path.dirname(__file__), "chroma_db")
+CHAT_LOG = "/var/log/cognitive-core/chat.jsonl"
+TOOLS_LOG = "/var/log/cognitive-core/tools.jsonl"
+RAG_LOG_STRUCTURED = "/var/log/cognitive-core/rag.jsonl"
 
 # Suppress torchao noise
 os.environ["TORCHCODEC_DISABLE"] = "1"
@@ -219,7 +222,14 @@ class Agent:
                     if on_token:
                         on_token("reasoning", r)
             full_text = content + reasoning
-
+            self._write_log(CHAT_LOG, {
+                "timestamp": datetime.now().isoformat(),
+                "type": "router_response",
+                "turn": turn,
+                "prompt": prompt,
+                "reasoning": reasoning[:500],
+                "content": content[:500],
+            })
             # ── Check for tool calls ──
             calls = parse_tool_calls(full_text)
 
@@ -309,7 +319,12 @@ class Agent:
                     )
 
                 self._write_trace(prompt, f"tool_call:{tool_name}", result[:200])
-
+                self._write_log(TOOLS_LOG, {
+                    "timestamp": datetime.now().isoformat(),
+                    "tool": tool_name,
+                    "parameters": tool_params,
+                    "result_snippet": str(result)[:500],
+                })
                 # For web search tools: synthesize results with Granite instead of 1B router
                 if tool_name in ("web_search", "web_fetch", "tavily_search", "tavily_research"):
                     synthesis = self._synthesize(prompt, result, on_token)
@@ -494,6 +509,15 @@ class Agent:
             return answer
         except Exception as e:
             return f"[Granite synthesis error: {e}]"
+
+    def _write_log(self, filepath: str, data: dict):
+        """Append a structured log line to a JSONL file."""
+        try:
+            os.makedirs(os.path.dirname(filepath), exist_ok=True)
+            with open(filepath, "a") as f:
+                f.write(json.dumps(data) + "\n")
+        except (IOError, PermissionError):
+            pass
 
     def _write_trace(self, prompt, decision, content=None, reasoning=None):
         latency = 0

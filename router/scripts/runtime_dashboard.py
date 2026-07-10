@@ -23,6 +23,9 @@ import sys as _sys
 ROUTER_LOG = "/tmp/cognitive-core.log"
 RAG_LOG = "/tmp/cognitive-core-rag.log"
 TRACES_PATH = "/var/log/cognitive-core/traces.jsonl"
+CHAT_LOG = "/var/log/cognitive-core/chat.jsonl"
+TOOLS_LOG = "/var/log/cognitive-core/tools.jsonl"
+RAG_LOG_STRUCTURED = "/var/log/cognitive-core/rag.jsonl"
 CHROMA_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "chroma_db")
 ROUTER_URL = "http://localhost:8081/v1"
 RAG_URL = "http://localhost:8082/v1"
@@ -115,6 +118,9 @@ class Handler(BaseHTTPRequestHandler):
         return {
             "router_log": tail(ROUTER_LOG, 40),
             "rag_log": tail(RAG_LOG, 40),
+            "chat_log": tail(CHAT_LOG, 20),
+            "tool_log": tail(TOOLS_LOG, 20),
+            "rag_structured": tail(RAG_LOG_STRUCTURED, 15),
             "traces": read_traces(TRACES_PATH)[::-1],
             "trace_count": sum(1 for _ in open(TRACES_PATH) if _.strip()) if os.path.exists(TRACES_PATH) else 0,
             "chroma_count": chroma_count(),
@@ -304,6 +310,9 @@ a { color: #4af; text-decoration: none; }
   display: grid; grid-template-columns: 1fr 1fr;
   gap: 4px; margin-bottom: 6px;
 }
+.main-grid .log-panel {
+  min-height: 180px; max-height: 240px;
+}
 
 /* Log panels */
 .log-panel {
@@ -441,15 +450,23 @@ a { color: #4af; text-decoration: none; }
   <div class="stat"><div class="num" id="sKb">—</div><div class="lbl">Chunks</div></div>
 </div>
 
-<!-- Log Grid -->
+<!-- 4-panel grid -->
 <div class="main-grid">
   <div class="log-panel">
-    <div class="panel-title">📜 Router — MiniCPM5-1B :8081</div>
-    <div class="panel-body" id="routerLog">Loading...</div>
+    <div class="panel-title">💬 Router Chat — prompts &amp; responses</div>
+    <div class="panel-body" id="chatLog">Loading...</div>
   </div>
   <div class="log-panel">
-    <div class="panel-title">📜 RAG — Granite 4.1-8B :8082</div>
+    <div class="panel-title">📜 RAG Server Log — Granite 4.1-8B :8082</div>
     <div class="panel-body" id="ragLog">Loading...</div>
+  </div>
+  <div class="log-panel">
+    <div class="panel-title">🔧 Tool Calls — executed via MCP / builtin</div>
+    <div class="panel-body" id="toolLog">Loading...</div>
+  </div>
+  <div class="log-panel">
+    <div class="panel-title">📚 Chroma Recalls — RAG queries &amp; results</div>
+    <div class="panel-body" id="ragStructuredLog">Loading...</div>
   </div>
 </div>
 
@@ -516,8 +533,10 @@ function renderTraces(traces) {
 
 function update() {
   fetch('/api/data').then(r => r.json()).then(d => {
-    document.getElementById('routerLog').textContent = d.router_log || '(empty)';
+    document.getElementById('chatLog').textContent = d.chat_log || '(empty)';
     document.getElementById('ragLog').textContent = d.rag_log || '(empty)';
+    document.getElementById('toolLog').textContent = d.tool_log || '(empty)';
+    document.getElementById('ragStructuredLog').textContent = d.rag_structured || '(empty)';
     document.getElementById('traceCount').textContent = d.trace_count;
     document.getElementById('tracesFeed').innerHTML = renderTraces(d.traces);
     document.getElementById('kbCount').textContent = d.chroma_count >= 0 ? d.chroma_count : '?';
