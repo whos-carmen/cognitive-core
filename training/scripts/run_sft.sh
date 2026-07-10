@@ -29,6 +29,18 @@ done
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 SCRIPTS_DIR="${REPO_ROOT}/training/scripts"
 
+# Auto-mount S3 if not mounted
+if ! mountpoint -q /mnt/s3 2>/dev/null; then
+    echo "=== Mounting S3 ==="
+    bash "${SCRIPTS_DIR}/mount_s3.sh" 2>/dev/null || echo "S3 mount skipped"
+fi
+
+# Auto-detect pre-tokenized data on S3 mount
+if [ -z "$PRETOKENIZED" ] && [ -d "/mnt/s3/cognitive-core/dataset/train_v4_tokenized" ]; then
+    PRETOKENIZED="/mnt/s3/cognitive-core/dataset/train_v4_tokenized"
+    echo "Found pre-tokenized data on S3 mount: ${PRETOKENIZED}"
+fi
+
 # GPU detection
 detect_gpu() {
     nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1 || echo ""
