@@ -401,6 +401,7 @@ a { color: #4af; text-decoration: none; }
 .chat-input-row .btn:hover { background: #1a5276; }
 
 .chat-output {
+  white-space: pre-wrap;
   padding: 6px; max-height: 400px; overflow-y: auto;
   font-size: 12px; line-height: 1.5;
 }
