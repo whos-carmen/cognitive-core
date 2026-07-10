@@ -161,6 +161,8 @@ class Agent:
         self.tool_mappings = {}
         self._session_history = []
         self._reranker = None  # lazy-loaded
+        self._project_root = os.path.dirname(os.path.abspath(__file__))
+        self._project_tree = ""  # populated at startup
 
     async def start(self):
         print("Connecting to MCP servers...")
@@ -202,6 +204,9 @@ class Agent:
                     system_prompt = f.read()
             except FileNotFoundError:
                 system_prompt = "You are a cognitive core. Use tools when needed."
+            # Append dynamic project context
+            if self._project_tree:
+                system_prompt += f"\n\n## Your Environment\nYou are running in: {self._project_root}\nLocal project files available:\n{self._project_tree}\n\nSearch local files FIRST before searching the web. Use shell_exec or file_search for local file queries like finding files, searching code, or reading project documentation."
 
         messages = [
             {"role": "system", "content": system_prompt},
@@ -323,6 +328,16 @@ class Agent:
                     # Built-in tool: execute locally
                     result = self._exec_builtin(tool_name, tool_params, mapping)
                 else:
+                    # Local-first: check local files before web search
+                    if tool_name in ("web_search", "tavily_search"):
+                        local_hit = self._quick_local_search(prompt)
+                        if local_hit and "No files" not in local_hit:
+                            if on_token:
+                                on_token("reasoning", "\n[found matching local files, skipping web search]\n")
+                                on_token("content", local_hit)
+                            self._write_trace(prompt, "local_file_search", local_hit)
+                            self._write_log(TOOLS_LOG, {"timestamp": str(datetime.now()), "tool": "local_file_search", "parameters": {"prompt": prompt}, "result_snippet": local_hit[:200]})
+                            return local_hit
                     # MCP tool: execute via MCP server
                     mcp_params = {}
                     param_map = mapping.get("param_mapping", {})
@@ -367,17 +382,17 @@ class Agent:
     def _quick_local_search(self, query: str) -> str | None:
         """Quick search of project files for keywords from the query."""
         import subprocess, re, os
-        project = "/home/pixie/cognitive-core"
+        project = getattr(self, "_project_root", ".")
         # Extract meaningful keywords (skip common words)
         keywords = [w.lower() for w in re.findall(r'\b[a-zA-Z]{3,}\b', query)
-                   if w.lower() not in ("the", "and", "for", "are", "was", "has", "had", "but", "not", "what", "how", "why", "when", "where", "that", "this", "with", "from", "have", "does", "its", "about", "search", "file", "files", "tool", "tools", "find", "local", "code", "project")]
+                   if w.lower() not in ("the","and","for","are","was","has","had","but","not","what","how","why","when","where","that","this","with","from","have","does","its","about","search","file","files","tool","tools","find","local","code","project","used","using","use","get","got","make","made","like","just","also","than","then","can","will","would","could","should","tell","ask","know","need","want")]
         if not keywords:
             return None
         # Use first 2 meaningful keywords
         search = "|".join(keywords[:2])
         try:
             result = subprocess.check_output(
-                f'grep -rli "{search}" "{project}" --include="*.py" --include="*.md" --include="*.txt" --include="*.json" --include="*.yaml" --include="*.yml" 2>/dev/null | head -15',
+                f'grep -rliE --exclude-dir=.venv --exclude-dir=__pycache__ "{search}" "{project}" --include="*.py" --include="*.md" --include="*.txt" --include="*.json" --include="*.yaml" --include="*.yml" 2>/dev/null | head -15',
                 shell=True, text=True, timeout=10,
             )
             if result.strip():
