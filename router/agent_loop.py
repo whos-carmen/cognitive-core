@@ -247,7 +247,7 @@ class Agent:
                     })
                     continue
 
-                # No tool calls → double-check against RAG before trusting
+                # No tool calls → cascade: RAG → web search
                 answer = content if content.strip() else reasoning.strip() or "(no response)"
                 if turn == 0 and len(prompt) > 10:
                     rag_check = self._query_rag(prompt)
@@ -257,8 +257,14 @@ class Agent:
                             on_token("content", rag_check)
                         self._write_trace(prompt, "needs_knowledge", rag_check)
                         return rag_check
-                if on_token and turn == 0 and len(prompt) > 10:
-                    on_token("reasoning", "\n[no knowledge base match, using model answer]\n")
+                    # RAG didn't have it → fall through to web search
+                    if on_token:
+                        on_token("reasoning", "\n[knowledge base empty, searching web...]\n")
+                    messages.append({
+                        "role": "user",
+                        "content": f"Please use the web_search tool to find information about this question. Search the web for: {prompt}"
+                    })
+                    continue
                 self._write_trace(prompt, "answer_directly", answer, reasoning)
                 return answer
 
