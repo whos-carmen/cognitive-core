@@ -164,6 +164,12 @@ class Agent:
         await self.mcp.connect_all()
         self.tool_mappings = self.mcp.get_tool_mappings()
         print(f"  {len(self.tool_mappings)} tool mappings loaded")
+        # Pre-load reranker so first query isn't slow
+        try:
+            self._get_reranker()
+            print("  Reranker loaded")
+        except Exception as e:
+            print(f"  Reranker load: {e}")
 
     async def stop(self):
         await self.mcp.disconnect_all()
@@ -241,8 +247,18 @@ class Agent:
                     })
                     continue
 
-                # No tool calls and not a refusal → this is the final answer
+                # No tool calls → double-check against RAG before trusting
                 answer = content if content.strip() else reasoning.strip() or "(no response)"
+                if turn == 0 and len(prompt) > 10:
+                    rag_check = self._query_rag(prompt)
+                    if rag_check and "not have enough information" not in rag_check.lower()[:50]:
+                        if on_token:
+                            on_token("reasoning", "\n[verified against knowledge base]\n")
+                            on_token("content", rag_check)
+                        self._write_trace(prompt, "needs_knowledge", rag_check)
+                        return rag_check
+                if on_token and turn == 0 and len(prompt) > 10:
+                    on_token("reasoning", "\n[no knowledge base match, using model answer]\n")
                 self._write_trace(prompt, "answer_directly", answer, reasoning)
                 return answer
 
