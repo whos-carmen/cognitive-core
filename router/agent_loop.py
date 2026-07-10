@@ -255,8 +255,6 @@ class Agent:
                 r = getattr(delta, "reasoning_content", None) or ""
                 if c:
                     content += c
-                    if on_token:
-                        on_token("content", c)
                 if r:
                     reasoning += r
                     if on_token:
@@ -272,6 +270,17 @@ class Agent:
             })
             # ── Check for tool calls ──
             calls = parse_tool_calls(full_text)
+
+            # Now that we know if there are tool calls, stream the content or a status message
+            if on_token:
+                if calls:
+                    # Don't show raw tool XML — show a brief status instead
+                    tool_names = [c["name"] for c in calls]
+                    on_token("content", f"[using {', '.join(tool_names)}...]")
+                else:
+                    # No tool calls — flush the buffered content
+                    for chunk_text in [content[i:i+50] for i in range(0, len(content), 50)]:
+                        on_token("content", chunk_text)
 
             if not calls:
                 # Check if the model refused or speculated (didn't use tools when it should)
@@ -491,7 +500,7 @@ class Agent:
         project = getattr(self, "_project_root", ".")
         # Extract meaningful keywords (skip common words)
         keywords = [w.lower() for w in re.findall(r'\b[a-zA-Z]{3,}\b', query)
-                   if w.lower() not in ("the","and","for","are","was","has","had","but","not","what","how","why","when","where","that","this","with","from","have","does","its","about","search","file","files","tool","tools","find","local","code","project","used","using","use","get","got","make","made","like","just","also","than","then","can","will","would","could","should","tell","ask","know","need","want")]
+                   if w.lower() not in ("the","and","for","are","was","has","had","but","not","what","how","why","when","where","that","this","with","from","have","does","its","about","search","file","files","tool","tools","find","local","code","project","used","using","use","get","got","make","made","like","just","also","than","then","can","will","would","could","should","tell","ask","know","need","want","name","my","me","your","you")]
         if not keywords:
             return None
         # Use first 2 meaningful keywords
