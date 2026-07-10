@@ -317,6 +317,7 @@ class Agent:
                         if on_token:
                             on_token("reasoning", "\n[found matching local files]\n")
                             on_token("content", local_result[:2000])
+                        self._save_session(session_id, session_history, prompt, local_result, [])
                         self._write_trace(prompt, "local_file_search", local_result)
                         return local_result
                     # Nothing local → fall through to web search
@@ -327,6 +328,7 @@ class Agent:
                         "content": f"Please use the web_search tool to find information about this question. Search the web for: {prompt}"
                     })
                     continue
+                self._save_session(session_id, session_history, prompt, answer, [])
                 self._write_trace(prompt, "answer_directly", answer, reasoning)
                 return answer
 
@@ -380,6 +382,7 @@ class Agent:
                 # For web search tools: synthesize results with Granite instead of 1B router
                 if tool_name in ("web_search", "web_fetch", "tavily_search", "tavily_research"):
                     synthesis = self._synthesize(prompt, result, on_token)
+                    self._save_session(session_id, session_history, prompt, synthesis, [])
                     return synthesis
 
                 # For other tools: feed result back to router model
@@ -405,6 +408,7 @@ class Agent:
             except Exception:
                 pass
         # Max turns reached — return last response
+        self._save_session(session_id, session_history, prompt, "Max tool call turns reached.", [])
         return "Max tool call turns reached."
 
     def _quick_local_search(self, query: str) -> str | None:

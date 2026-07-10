@@ -526,7 +526,7 @@ a { color: #4af; text-decoration: none; }
 
 <!-- Session list -->
 <div class="ingest-panel" style="margin-bottom:6px;">
-  <div class="panel-title" onclick="this.nextElementSibling.classList.toggle('open')">\u2328 Sessions \u25bc</div>
+  <div class="panel-title" onclick="this.nextElementSibling.classList.toggle('open')">Sessions</div>
   <div class="ingest-body open" style="display:block;max-height:150px;overflow-y:auto;">
     <select id="sessionList" style="width:100%;background:#0d0d1a;border:1px solid #0f3460;color:#c7c7c7;font-family:monospace;font-size:11px;padding:3px;" onchange="loadSession(this.value)"></select>
     <div style="margin-top:4px;font-size:10px;color:#484848;">Select a session to reload it, or + New for a fresh conversation.</div>
