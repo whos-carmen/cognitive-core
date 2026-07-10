@@ -32,6 +32,23 @@ RAG_URL = "http://localhost:8082/v1"
 MAX_TRACES = 200
 
 
+def parse_tps(log_path: str) -> str:
+    """Parse tokens/sec from latest llama.cpp timing line."""
+    try:
+        lines = open(log_path).readlines()
+        for line in reversed(lines):
+            if "total time" in line and "tokens" in line:
+                import re
+                m = re.search(r'total time =\s+([\d.]+) ms\s+/\s+(\d+) tokens', line)
+                if m:
+                    ms, tokens = float(m.group(1)), int(m.group(2))
+                    if ms > 0:
+                        tps = tokens / (ms / 1000)
+                        return f"{tps:.0f}"
+        return "—"
+    except Exception:
+        return "—"
+
 def tail(path: str, n: int = 40) -> str:
     if not os.path.exists(path):
         return "[waiting for log file...]"
@@ -117,7 +134,9 @@ class Handler(BaseHTTPRequestHandler):
     def _collect_data(self):
         return {
             "router_log": tail(ROUTER_LOG, 40),
+            "router_tps": parse_tps(ROUTER_LOG),
             "rag_log": tail(RAG_LOG, 40),
+            "rag_tps": parse_tps(RAG_LOG),
             "chat_log": tail(CHAT_LOG, 20),
             "tool_log": tail(TOOLS_LOG, 20),
             "rag_structured": tail(RAG_LOG_STRUCTURED, 15),
@@ -444,6 +463,8 @@ a { color: #4af; text-decoration: none; }
 <!-- Stats -->
 <div class="stats" id="statsRow">
   <div class="stat"><div class="num" id="sTraces">—</div><div class="lbl">Traces</div></div>
+  <div class="stat"><div class="num" id="sRouterTps">—</div><div class="lbl">Router tok/s</div></div>
+  <div class="stat"><div class="num" id="sRagTps">—</div><div class="lbl">RAG tok/s</div></div>
   <div class="stat"><div class="num" id="sVram">—</div><div class="lbl">VRAM</div></div>
   <div class="stat"><div class="num" id="sKb">—</div><div class="lbl">Chunks</div></div>
 </div>
@@ -539,6 +560,8 @@ function update() {
     document.getElementById('tracesFeed').innerHTML = renderTraces(d.traces);
     document.getElementById('kbCount').textContent = d.chroma_count >= 0 ? d.chroma_count : '?';
     document.getElementById('sTraces').textContent = d.trace_count;
+    document.getElementById('sRouter').textContent = d.router_tps || '—';
+    document.getElementById('sRag').textContent = d.rag_tps || '—';
     document.getElementById('sKb').textContent = d.chroma_count >= 0 ? d.chroma_count : '-';
   });
   fetch('/api/vram').then(r => r.json()).then(d => {

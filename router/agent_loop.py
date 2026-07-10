@@ -206,7 +206,7 @@ class Agent:
                 system_prompt = "You are a router. Use tools when needed. Explore your own codebase to understand yourself."
             # Append dynamic project context
             if self._project_tree:
-                system_prompt += f"\n\n## Environment\nYou are running at: {self._project_root}\n\nYour capabilities are defined dynamically. To discover what tools you have, read tools_config.json. To understand your own source code, explore the project files. Use shell_exec or file_search to investigate the codebase.\n\nProject structure for reference:\n{self._project_tree}\n\nSearch local files before the web."
+                system_prompt += f"\n\n## Environment\nProject root: {self._project_root}\nProject structure:\n{self._project_tree}\n\nSearch local files before the web."
 
         messages = [
             {"role": "system", "content": system_prompt},
@@ -266,7 +266,7 @@ class Agent:
                         "timestamp": datetime.now().isoformat(),
                         "type": "rag_query",
                         "question": prompt,
-                        "has_answer": rag_answer is not None and "not have enough information" not in rag_answer.lower()[:50],
+                        "answer": (rag_answer or "")[:500],
                     })
                     if rag_answer and "not have enough information" not in rag_answer.lower():
                         self._write_trace(prompt, "needs_knowledge", rag_answer)
@@ -287,7 +287,7 @@ class Agent:
                         "timestamp": datetime.now().isoformat(),
                         "type": "rag_query",
                         "question": prompt,
-                        "has_answer": rag_check is not None and "not have enough information" not in rag_check.lower()[:50],
+                        "answer": (rag_check or "")[:500],
                     })
                     if rag_check and "not have enough information" not in rag_check.lower()[:50]:
                         if on_token:
