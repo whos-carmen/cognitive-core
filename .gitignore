@@ -1,22 +1,35 @@
-# Model weights and downloaded model repos
+# Models (large, downloaded at setup)
 models/
+models-cache/
 
-# Training outputs (regenerated)
-train/
-logs/
+# Training data (large, downloaded at setup)
+dataset/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv*/
+*.egg-info/
+
+# Docker
+.docker/
+
+# OS
+.DS_Store
+*.swp
+*.swo
+*~
+
+# Logs
 *.log
-*.jsonl
+train/logs/
+train/outputs/
 
 # HF cache
 .cache/
+.huggingface/
 
-# Docker
-.cached/
-
-# Sensitive keys
-*.pem
-*.key
-__pycache__/
-
-# Virtual environment
-.venv/
+# Checkpoints
+checkpoints/
+router/chroma_db/

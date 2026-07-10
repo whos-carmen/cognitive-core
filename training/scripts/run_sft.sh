@@ -1,19 +1,17 @@
 #!/bin/bash
 # Cognitive Core — SFT Training Launcher
-# Run from the host: bash scripts/run_sft.sh [mode]
-#   mode = full (default, 3 epochs) | smoke (5 steps) | dpo
+# Run from the training/ dir: bash scripts/run_sft.sh [mode]
+#   mode = full (3 epochs) | smoke (5 steps) | dpo | monitor | dashboard
 set -euo pipefail
 
 MODE="${1:-full}"
-REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 
 DOCKER_CMD=(
     docker run -it --rm
     --gpus all
     --shm-size=16g
     -v "${REPO_ROOT}:/workspace"
-    -v "${REPO_ROOT}/models-cache:/workspace/models"
-    -v "${REPO_ROOT}/train:/workspace/train"
     -e TOKENIZERS_PARALLELISM=false
     -w /workspace
     cognitive-core:latest
@@ -21,8 +19,8 @@ DOCKER_CMD=(
 
 case "$MODE" in
   smoke)
-    echo "=== SFT SMOKE TEST (5 steps, short sequences) ==="
-    "${DOCKER_CMD[@]}" python /workspace/code/train/sft.py \
+    echo "=== SFT SMOKE TEST (5 steps) ==="
+    "${DOCKER_CMD[@]}" python /workspace/training/code/train/sft.py \
       --model /workspace/models/merged \
       --train_file /workspace/dataset/train_v4.jsonl \
       --out /workspace/train/outputs/sft_smoke \
@@ -34,8 +32,8 @@ case "$MODE" in
     ;;
 
   full)
-    echo "=== SFT FULL TRAINING (3 epochs, ~3-6h) ==="
-    "${DOCKER_CMD[@]}" python /workspace/code/train/sft.py \
+    echo "=== SFT FULL TRAINING (3 epochs) ==="
+    "${DOCKER_CMD[@]}" python /workspace/training/code/train/sft.py \
       --model /workspace/models/merged \
       --train_file /workspace/dataset/train_v4.jsonl \
       --out /workspace/train/outputs/sft_claude_agent \
@@ -54,10 +52,10 @@ case "$MODE" in
     ;;
 
   dpo)
-    echo "=== DPO TRAINING (2-4h) ==="
-    "${DOCKER_CMD[@]}" python /workspace/code/train/dpo.py \
+    echo "=== DPO TRAINING ==="
+    "${DOCKER_CMD[@]}" python /workspace/training/code/train/dpo.py \
       --model /workspace/train/outputs/sft_claude_agent \
-      --data /workspace/dataset/dpo_onpolicy_claude.jsonl \
+      --data /workspace/dataset/dpo_onpolicy_v4.jsonl \
       --out /workspace/train/outputs/final-cognitive-core \
       --beta 0.1 \
       --lr 1e-6 \
@@ -78,10 +76,10 @@ case "$MODE" in
   dashboard)
     DASH_TOKEN="${2:-}"
     echo "=== STARTING LIVE TRAINING DASHBOARD ==="
-    echo "Open: http://$(hostname -I | awk '{print $1}'):8765"
-    echo ""
+    IP=$(hostname -I | awk "{print \$1}")
+    echo "Open: http://${IP}:8765"
     cd "${REPO_ROOT}"
-    python3 scripts/dashboard.py --port 8765 --host 0.0.0.0 ${DASH_TOKEN:+--token "$DASH_TOKEN"}
+    python3 training/scripts/dashboard.py --port 8765 --host 0.0.0.0 ${DASH_TOKEN:+--token "$DASH_TOKEN"}
     ;;
 
   *)
