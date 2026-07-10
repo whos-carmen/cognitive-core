@@ -468,7 +468,7 @@ class Agent:
                     "result_snippet": str(result)[:500],
                 })
                 # For web search tools: synthesize results with Granite instead of 1B router
-                if tool_name in ("web_search", "web_fetch", "tavily_search", "tavily_research"):
+                if tool_name in ("web_search", "web_fetch", "tavily_search", "tavily_research", "shell_exec", "file_search"):
                     synthesis = self._synthesize(prompt, result, on_token)
                     self._save_session(session_id, session_history, prompt, synthesis, [])
                     return synthesis
