@@ -207,7 +207,7 @@ class Agent:
                 system_prompt = "You are a router. Use tools when needed. Explore your own codebase to understand yourself."
             # Append dynamic project context
             if self._project_tree:
-                system_prompt += f"\n\n## Environment\nProject root: {self._project_root}\nProject structure:\n{self._project_tree}\n\nSearch local files before the web."
+                system_prompt += f"\n\n## Environment\nProject root: {self._project_root}\nProject structure:\n{self._project_tree}\n\nAvailable tools: web_search (web), web_fetch (web), shell_exec (local), file_search (local), rag_query (knowledge base), rag_status (knowledge base). For questions about project code/docs, use rag_query. Search local files before the web."
 
         messages = [
             {"role": "system", "content": system_prompt},
@@ -478,6 +478,39 @@ class Agent:
                 return f"Search timed out"
             except Exception as e:
                 return f"Error: {e}"
+
+        if name == "rag_query":
+            """Direct query to Chroma + Granite RAG pipeline."""
+            param_map = mapping.get("param_mapping", {})
+            query = params.get(param_map.get("query", "query"), "")
+            if not query:
+                return "Error: no query provided"
+            try:
+                from sentence_transformers import SentenceTransformer
+                import chromadb
+                embed = SentenceTransformer("ibm-granite/granite-embedding-english-r2")
+                db = chromadb.PersistentClient(path=CHROMA_PATH)
+                collection = db.get_or_create_collection("knowledge")
+                count = collection.count()
+                if count == 0:
+                    return "Knowledge base is empty. Ingest documents first using rag_pipeline.py."
+                q_emb = embed.encode([query], normalize_embeddings=True).tolist()[0]
+                results = collection.query(query_embeddings=[q_emb], n_results=min(5, count))
+                docs = results.get("documents", [[]])[0]
+                metas = results.get("metadatas", [[]])[0]
+                if not docs:
+                    return "No relevant documents found in the knowledge base."
+                context = "\n\n---\n\n".join(f"[Source: {m.get('source','?') if m else '?'}]\n{d}" for d, m in zip(docs, metas))
+                client = OpenAI(base_url=RAG_URL, api_key="not-needed")
+                rag_system = "You are a knowledge assistant. Answer based ONLY on the context below. If the context doesn't contain the answer, say 'I don't have enough information to answer that.'"
+                response = client.chat.completions.create(
+                    model="granite", max_tokens=400,
+                    messages=[{"role": "system", "content": rag_system},
+                              {"role": "user", "content": f"Context:\n{context}\n\nQuestion: {query}"}],
+                )
+                return response.choices[0].message.content or "(no response)"
+            except Exception as e:
+                return f"RAG query error: {e}"
 
         if name == "rag_status":
             try:

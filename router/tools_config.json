@@ -77,6 +77,13 @@
       "description": "Show the current state of the RAG knowledge base: total chunks, sample entries, what sources are stored",
       "type": "builtin",
       "param_mapping": {}
+    },
+    "rag_query": {
+      "description": "Query the RAG knowledge base (Chroma + Granite 4.1-8B) for answers from ingested documentation. Use this for questions about the project's code, tools, configuration, and documentation.",
+      "type": "builtin",
+      "param_mapping": {
+        "query": "query"
+      }
     }
   }
 }
