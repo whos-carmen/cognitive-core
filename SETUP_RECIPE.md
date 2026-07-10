@@ -22,11 +22,7 @@ Complete setup guide for the 7900 XTX + ROCm 7.2.4 environment.
 sudo apt-get install -y cmake ninja-build protobuf-compiler libxml2-dev
 sudo apt-get install -y ffmpeg   # for torchcodec (optional, can uninstall)
 
-# Rust (for SGLang builds, not needed for llama.cpp)
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-source "$HOME/.cargo/env"
-
-# Node.js (for npx/MCP servers)
+# Node.js (for npx/MCP servers like Tavily)
 # Already available via /usr/local/bin/npx
 ```
 
@@ -60,13 +56,13 @@ uv pip uninstall torchcodec
 ```bash
 # All stored in ~/.cache/huggingface/hub/
 
-# Router model (GGUF Q8_0)
+# Router model (Luminia MiniCPM5-1B-Agent-v4, GGUF Q8_0)
 python -c "from huggingface_hub import hf_hub_download; print(hf_hub_download('Luminia/MiniCPM5-1B-Agent-GGUF', 'MiniCPM5-1B-Agent-v4-Q8_0.gguf'))"
 
-# RAG model (GGUF Q4_K_M)
+# RAG model (Granite 4.1-8B, GGUF Q4_K_M)
 python -c "from huggingface_hub import hf_hub_download; print(hf_hub_download('mrutkows/granite-4.1-8b-GGUF', 'granite-4.1-8b-Q4_K_M.gguf'))"
 
-# Agent model (GGUF Q4_0)
+# Agent model (Qwen3.5-4B-super-coder, GGUF Q4_0)
 python -c "from huggingface_hub import hf_hub_download; print(hf_hub_download('jica98/qwen3.5-4B-super-coder', 'qwen3.5-4B-super-coder.Q4_0.gguf'))"
 
 # Reranker model (transformers, fp16 on GPU)
@@ -97,23 +93,39 @@ cmake --build . --config Release -j$(nproc)
 # In router/.env:
 export HSA_OVERRIDE_GFX_VERSION=11.0.0   # gfx1100 compatibility
 export ROCR_VISIBLE_DEVICES=0             # hide iGPU, use 7900 XTX only
+export TAVILY_API_KEY="your-key"
 ```
+
+## Model Cache Paths
+
+After downloading, find the exact paths with:
+
+```bash
+find /home/pixie/.cache/huggingface/hub -name "*.gguf" -type l 2>/dev/null
+```
+
+Typical paths (snapshot hashes will differ):
+- Router: `.../models--Luminia--MiniCPM5-1B-Agent-GGUF/snapshots/.../MiniCPM5-1B-Agent-v4-Q8_0.gguf`
+- RAG: `.../models--mrutkows--granite-4.1-8b-GGUF/snapshots/.../granite-4.1-8b-Q4_K_M.gguf`
+- Agent: `.../models--jica98--qwen3.5-4B-super-coder/snapshots/.../qwen3.5-4B-super-coder.Q4_0.gguf`
 
 ## Start Everything
 
-All four services, each in its own screen session:
+All four services, each in its own screen session. Start in order:
 
-### 1. Router (MiniCPM5-1B, port 8081)
+### 1. Router (Luminia MiniCPM5-1B-Agent-v4, port 8081)
 
 ```bash
 screen -dmS cognitive-core bash -c 'cd /tmp/llama.cpp/build/bin && \
   HSA_OVERRIDE_GFX_VERSION=11.0.0 ROCR_VISIBLE_DEVICES=0 ./llama-server \
-  --model /path/to/MiniCPM5-1B-Q8_0.gguf \
+  --model /path/to/MiniCPM5-1B-Agent-v4-Q8_0.gguf \
   --host 0.0.0.0 --port 8081 \
   --n-gpu-layers 99 --ctx-size 8192 \
-  --chat-template-file /path/to/router/configs/chat-template.jinja \
+  --chat-template-file /path/to/cognitive-core/router/chat_template.jinja \
   2>&1 | tee /tmp/cognitive-core.log'
 ```
+
+Use the Luminia-specific chat template from `router/chat_template.jinja`.
 
 ### 2. RAG Model (Granite 4.1-8B, port 8082)
 
@@ -140,19 +152,21 @@ screen -dmS cognitive-agent bash -c 'cd /tmp/llama.cpp/build/bin && \
 ### 4. Dashboard + Agent Loop (port 8766)
 
 ```bash
-cd /home/pixie/cognitive-core/router
+cd /path/to/cognitive-core/router
 source .venv/bin/activate
 source .env
-TAVILY_API_KEY="your-key" screen -dmS cognitive-dash bash -c '\
-  TAVILY_API_KEY="your-key" python scripts/runtime_dashboard.py --port 8766 \
+screen -dmS cognitive-dash bash -c '\
+  TAVILY_API_KEY="$TAVILY_API_KEY" python scripts/runtime_dashboard.py --port 8766 \
   2>&1 | tee /tmp/cognitive-dash.log'
 ```
+
+Wait 15-20 seconds for all models to load, then open http://your-ip:8766.
 
 ## VRAM Budget
 
 | Model | Quant | VRAM | Port |
 |---|---|---|---|
-| MiniCPM5-1B (router) | Q8_0 | ~1.1 GB | 8081 |
+| Luminia MiniCPM5-1B-Agent-v4 (router) | Q8_0 | ~1.1 GB | 8081 |
 | Granite 4.1-8B (RAG) | Q4_K_M | ~5.3 GB | 8082 |
 | Qwen3.5-4B (agent) | Q4_0 | ~2.5 GB | 8083 |
 | LlamaNemotron-Rerank-1b-v2 | fp16 | ~2.0 GB | in-process |
@@ -163,33 +177,43 @@ TAVILY_API_KEY="your-key" screen -dmS cognitive-dash bash -c '\
 ## Shutdown
 
 ```bash
-# Kill all screen sessions
 screen -S cognitive-dash -X quit
+sleep 1
 screen -S cognitive-agent -X quit
+sleep 1
 screen -S cognitive-core-rag -X quit
+sleep 1
 screen -S cognitive-core -X quit
 ```
 
 ## Restore
 
 ```bash
-# Start all 4 services in order (above), then test:
-cd /home/pixie/cognitive-core/router
+# Follow "Start Everything" in order, then test:
+cd /path/to/cognitive-core/router
 source .venv/bin/activate
 source .env
-python test_prompt.py
-python agent_loop.py "What tools does the cognitive core have?"
+
+# Test direct answer
+curl -s -N -X POST http://localhost:8766/api/chat \
+  -H "Content-Type: application/json" \
+  -d '{"prompt":"what is this system?"}'
+
+# Test RAG query
+curl -s -N -X POST http://localhost:8766/api/chat \
+  -H "Content-Type: application/json" \
+  -d '{"prompt":"what info is in the RAG system?"}'
 ```
 
 ## Log Files
 
 | File | Source |
 |---|---|
-| `/tmp/cognitive-core.log` | Router server |
-| `/tmp/cognitive-core-rag.log` | RAG server |
-| `/tmp/cognitive-agent.log` | Agent server |
-| `/tmp/cognitive-dash.log` | Dashboard |
-| `/var/log/cognitive-core/chat.jsonl` | Chat history |
+| `/tmp/cognitive-core.log` | Router server (llama.cpp) |
+| `/tmp/cognitive-core-rag.log` | RAG server (Granite) |
+| `/tmp/cognitive-agent.log` | Agent server (Qwen) |
+| `/tmp/cognitive-dash.log` | Dashboard HTTP + agent loop |
+| `/var/log/cognitive-core/chat.jsonl` | Chat history (agent loop) |
 | `/var/log/cognitive-core/tools.jsonl` | Tool executions |
 | `/var/log/cognitive-core/rag.jsonl` | RAG queries |
 | `/var/log/cognitive-core/traces.jsonl` | Decision traces |
@@ -199,13 +223,46 @@ python agent_loop.py "What tools does the cognitive core have?"
 
 | Path | Purpose |
 |---|---|
-| `router/agent_loop.py` | Agent loop with MCP + tool cascade + agent model |
-| `router/tools_config.json` | MCP servers + tool mappings |
-| `router/scripts/runtime_dashboard.py` | Web UI dashboard |
-| `router/configs/system-prompt.md` | Router system prompt |
-| `router/configs/chat-template.jinja` | Chat template for MiniCPM5 |
-| `router/eval/tool_parser.py` | Tool call XML parser |
+| `router/agent_loop.py` | Agent loop: MCP client, tool cascade, 3-model routing |
+| `router/tools_config.json` | MCP servers (Tavily) + tool mappings (8 tools) |
+| `router/scripts/runtime_dashboard.py` | Web UI: 4-panel, live chat, markdown rendering |
+| `router/configs/system-prompt.md` | System prompt: "This is Cognitive Core..." |
+| `router/configs/chat_template.jinja` | Luminia-specific chat template |
+| `router/configs/granite-system-prompt.md` | Knowledge assistant system prompt |
+| `router/configs/qwen-system-prompt.md` | Bash/tool generation system prompt |
+| `router/eval/tool_parser.py` | Tool call XML parser (3 formats) |
 | `router/rag_pipeline.py` | Standalone RAG ingestion/query |
-| `router/.env` | Required env vars |
-| `router/launch.sh` | Server launcher (llama.cpp backend) |
+| `router/.env` | Required env vars (HSA, ROCR, TAVILY) |
+| `router/launch.sh` | Server launcher script |
 | `router/test_prompt.py` | Test client |
+| `router/docs/multi-tier-rag.md` | Architecture doc: session-specific Chroma |
+| `SETUP_RECIPE.md` | This file |
+
+## Architecture
+
+```
+Browser (port 8766)
+    │
+    ▼
+Dashboard + Agent Loop (Python, in-process)
+    │
+    ├── Router (port 8081) — Luminia MiniCPM5-1B-Agent-v4 (1B, Q8_0)
+    │       Generates responses, tool call XML
+    │       ↓ when tool needed
+    ├── Agent Model (port 8083) — Qwen3.5-4B (4B, Q4_0)
+    │       Recommends correct tool when router fails
+    │
+    ├── MCP Servers (via npx):
+    │   └── Tavily (web_search, web_fetch, research)
+    │
+    ├── Built-in Tools:
+    │   ├── shell_exec — bash one-liners
+    │   ├── file_search — grep/find project files
+    │   ├── rag_query — Chroma → Granite (port 8082)
+    │   └── rag_status — KB summary
+    │
+    └── Knowledge:
+        ├── Chroma DB (vector store)
+        ├── Granite 4.1-8B (RAG model, port 8082)
+        └── LlamaNemotron-Rerank-1b-v2 (in-process)
+```
