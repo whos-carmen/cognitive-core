@@ -244,7 +244,7 @@ class Agent:
             response = self.client.chat.completions.create(
                 model="minicpm5",
                 messages=messages,
-                max_tokens=500,
+                max_tokens=800,
                 stream=True,
             )
             for chunk in response:
@@ -276,6 +276,17 @@ class Agent:
                 # No tool calls — flush the buffered content
                 for chunk_text in [content[i:i+50] for i in range(0, len(content), 50)]:
                     on_token("content", chunk_text)
+
+            # If content has a substantive answer (not just tool calls), return it directly
+            import re as _re
+            clean_content = _re.sub(r'<function[^>]*>.*?</function>', '', content, flags=_re.DOTALL).strip()
+            clean_full = _re.sub(r'<function[^>]*>.*?</function>', '', full_text, flags=_re.DOTALL).strip()
+            if clean_content and len(clean_content) > 30:
+                if on_token:
+                    for chunk_text in [clean_content[i:i+50] for i in range(0, len(clean_content), 50)]:
+                        on_token("content", chunk_text)
+                self._write_trace(prompt, "answer_directly", clean_content, reasoning)
+                return clean_content
 
             if not calls:
                 # Check if the model refused or speculated (didn't use tools when it should)
@@ -520,7 +531,7 @@ class Agent:
             client = OpenAI(base_url=self._agent_cfg["url"], api_key=self._agent_cfg.get("api_key", "not-needed"))
             model = self._agent_cfg.get("model") or None
             response = client.chat.completions.create(
-                model=model, messages=[{"role": "user", "content": prompt}], max_tokens=500,
+                model=model, messages=[{"role": "user", "content": prompt}], max_tokens=800,
             )
             msg = response.choices[0].message
             content = msg.content or ""
@@ -601,7 +612,7 @@ class Agent:
                 client = OpenAI(base_url=RAG_URL, api_key="not-needed")
                 rag_system = "You are a knowledge assistant. Answer based ONLY on the context below. If the context doesn't contain the answer, say 'I don't have enough information to answer that.'"
                 response = client.chat.completions.create(
-                    model="granite", max_tokens=400,
+                    model="granite", max_tokens=600,
                     messages=[{"role": "system", "content": rag_system},
                               {"role": "user", "content": f"Context:\n{context}\n\nQuestion: {query}"}],
                 )
@@ -704,7 +715,7 @@ class Agent:
                     {"role": "system", "content": rag_system},
                     {"role": "user", "content": f"Context:\n{context}\n\nQuestion: {question}"},
                 ],
-                max_tokens=400,
+                max_tokens=600,
             )
             return response.choices[0].message.content
         except Exception as e:
@@ -721,7 +732,7 @@ class Agent:
                     {"role": "system", "content": "You are a research assistant. Given web search results and a question, produce a concise, accurate answer. Cite specific numbers and facts. If the results don't contain the answer, say so."},
                     {"role": "user", "content": f"Search results:\n{search_results[:3000]}\n\nQuestion: {question}"},
                 ],
-                max_tokens=500,
+                max_tokens=800,
             )
             answer = response.choices[0].message.content or "(no response)"
             if on_token:
