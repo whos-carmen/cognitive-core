@@ -16,6 +16,8 @@ import uuid
 from datetime import datetime
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse
+import asyncio
+import sys as _sys
 
 # ── Paths ──
 ROUTER_LOG = "/tmp/cognitive-core.log"
@@ -139,24 +141,16 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
 
         try:
-            # Run the agent loop synchronously
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
             import sys as _sys
             _sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
             from agent_loop import Agent
-            agent = Agent()
-
-            async def run_agent():
-                await agent.start()
-                try:
-                    result = await agent.run(prompt, system if system else None)
-                finally:
-                    await agent.stop()
-                return result
-
-            result = loop.run_until_complete(run_agent())
-            loop.close()
+            global _agent, _agent_loop
+            if '_agent' not in globals() or _agent is None:
+                _agent_loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(_agent_loop)
+                _agent = Agent()
+                _agent_loop.run_until_complete(_agent.start())
+            result = _agent_loop.run_until_complete(_agent.run(prompt, system if system else None))
             self._sse("content", result)
             self._sse("done", "")
         except Exception as e:

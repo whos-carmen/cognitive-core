@@ -170,6 +170,7 @@ class Agent:
 
     async def run(self, prompt: str, system_prompt: str = None, max_turns: int = 5) -> str:
         """Run one prompt through the agent loop."""
+        self._t_start = datetime.now()
         if system_prompt is None:
             sp_path = os.path.join(os.path.dirname(__file__), "configs", "system-prompt.md")
             try:
@@ -374,11 +375,14 @@ class Agent:
             return f"[Granite synthesis error: {e}]"
 
     def _write_trace(self, prompt, decision, content=None, reasoning=None):
+        latency = 0
+        if hasattr(self, '_t_start') and self._t_start:
+            latency = round((datetime.now() - self._t_start).total_seconds() * 1000)
         trace = {
             "timestamp": datetime.now().isoformat(),
             "decision": decision,
             "user": str(prompt)[:120],
-            "latency_ms": 0,
+            "latency_ms": latency,
             "reasoning_snippet": (reasoning or str(content or ""))[:200],
         }
         try:
