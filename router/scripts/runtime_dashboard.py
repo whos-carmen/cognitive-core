@@ -83,12 +83,15 @@ def rocm_vram() -> str:
         out = subprocess.check_output(
             ["rocm-smi", "--showmeminfo", "vram"], text=True, stderr=subprocess.DEVNULL
         )
+        total_g = used_g = 0
         for line in out.splitlines():
             if "VRAM Total Memory" in line and "GPU[0]" in line:
-                total = int(line.split(":")[-1].strip()) // (1024**3)
-            if "VRAM Total Used Memory" in line:
-                used = int(line.split(":")[-1].strip()) // (1024**3)
-        return f"{used}G / {total}G"
+                total_g = int(line.split(":")[-1].strip()) // (1024**3)
+            if "VRAM Total Used Memory" in line and "GPU[0]" in line:
+                used_g = int(line.split(":")[-1].strip()) // (1024**3)
+        if total_g == 0:
+            return "N/A"
+        return f"{used_g}G / {total_g}G"
     except Exception:
         return "N/A"
 
@@ -143,6 +146,7 @@ class Handler(BaseHTTPRequestHandler):
             "traces": read_traces(TRACES_PATH)[::-1],
             "trace_count": sum(1 for _ in open(TRACES_PATH) if _.strip()) if os.path.exists(TRACES_PATH) else 0,
             "chroma_count": chroma_count(),
+            "vram": rocm_vram(),
             "now": datetime.now().isoformat(),
         }
 
@@ -552,10 +556,11 @@ function renderTraces(traces) {
 
 function update() {
   fetch('/api/data').then(r => r.json()).then(d => {
-    document.getElementById('chatLog').textContent = d.chat_log || '(empty)';
-    document.getElementById('ragLog').textContent = d.rag_log || '(empty)';
+    document.getElementById('chatLog').textContent = (d.router_tps != '\u2014' ? '> ' + d.router_tps + ' tok/s\n---\n' : '') + (d.chat_log || '(empty)');
+    document.getElementById('ragLog').textContent = (d.rag_tps != '\u2014' ? '> ' + d.rag_tps + ' tok/s\n---\n' : '') + (d.rag_log || '(empty)');
     document.getElementById('toolLog').textContent = d.tool_log || '(empty)';
     document.getElementById('ragStructuredLog').textContent = d.rag_structured || '(empty)';
+    document.getElementById('sVram').textContent = d.vram || 'N/A';
     document.getElementById('traceCount').textContent = d.trace_count;
     document.getElementById('tracesFeed').innerHTML = renderTraces(d.traces);
     document.getElementById('kbCount').textContent = d.chroma_count >= 0 ? d.chroma_count : '?';
@@ -564,9 +569,7 @@ function update() {
     document.getElementById('sRag').textContent = d.rag_tps || '—';
     document.getElementById('sKb').textContent = d.chroma_count >= 0 ? d.chroma_count : '-';
   });
-  fetch('/api/vram').then(r => r.json()).then(d => {
-    document.getElementById('sVram').textContent = d.vram || 'N/A';
-  });
+
   document.getElementById('lastUpdated').textContent = 'updated: ' + new Date().toLocaleTimeString();
 }
 
