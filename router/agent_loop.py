@@ -194,13 +194,16 @@ class Agent:
         self._loop = asyncio.new_event_loop()
         self._loop.run_until_complete(self.start())
 
-    def _run_sync(self, prompt, system=None, on_token=None):
+    def _run_sync(self, prompt, system=None, on_token=None, session_id=None):
         """Synchronous run: uses the agent's own event loop, doesn't touch global loop."""
         return self._loop.run_until_complete(
-            self.run(prompt, system, on_token=on_token)
+            self.run(prompt, system, on_token=on_token, session_id=session_id)
         )
 
     async def run(self, prompt: str, system_prompt: str = None, max_turns: int = 5, on_token=None, session_id: str = None) -> str:
+        if session_id is None:
+            import hashlib, time
+            session_id = f"auto-{int(time.time())}-{hashlib.md5(prompt.encode()[:20]).hexdigest()[:4]}"
         """Run one prompt through the agent loop.
         
         If on_token is provided, it's called with (event_type, text) for streaming:
@@ -377,6 +380,7 @@ class Agent:
                                     if on_token:
                                         on_token("reasoning", f"\n[queried RAG {tool_for_rag}]\n")
                                         on_token("content", rag_result[:2000])
+                                    self._save_session(session_id, session_history, prompt, rag_result, [])
                                     self._write_trace(prompt, tool_for_rag, rag_result)
                                     self._write_log(TOOLS_LOG, {"timestamp": str(datetime.now()), "tool": tool_for_rag, "result_snippet": rag_result[:200]})
                                     return rag_result
@@ -420,6 +424,7 @@ class Agent:
                             if on_token:
                                 on_token("reasoning", "\n[found matching local files, skipping web search]\n")
                                 on_token("content", local_hit)
+                            self._save_session(session_id, session_history, prompt, local_hit, [])
                             self._write_trace(prompt, "local_file_search", local_hit)
                             self._write_log(TOOLS_LOG, {"timestamp": str(datetime.now()), "tool": "local_file_search", "parameters": {"prompt": prompt}, "result_snippet": local_hit[:200]})
                             return local_hit

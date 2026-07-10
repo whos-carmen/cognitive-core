@@ -174,6 +174,7 @@ class Handler(BaseHTTPRequestHandler):
         body = json.loads(self.rfile.read(length))
         prompt = body.get("prompt", "")
         system = body.get("system", "")
+        session_id = body.get("session_id", None)
 
         if not prompt.strip():
             self.send_json({"error": "empty prompt"})
@@ -195,7 +196,7 @@ class Handler(BaseHTTPRequestHandler):
                 _agent = Agent()
                 _agent._startup()
             result = _agent._run_sync(
-                prompt, system if system else None, on_token=lambda evt, txt: self._sse(evt, txt)
+                prompt, system if system else None, on_token=lambda evt, txt: self._sse(evt, txt), session_id=session_id
             )
             self._sse("done", "")
         except Exception as e:
