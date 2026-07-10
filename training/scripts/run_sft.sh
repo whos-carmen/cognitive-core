@@ -83,7 +83,7 @@ fi
 echo "Preset: $GPU_PRESET (max_len=$MAX_LEN, accum=$ACCUM, bsz=$BSZ)"
 
 DOCKER_CMD=(docker run -it --rm --gpus all --shm-size=16g --entrypoint bash
-    -v "${REPO_ROOT}:/workspace" -e TOKENIZERS_PARALLELISM=false
+    -v "${REPO_ROOT}:/workspace" -v /mnt/s3:/mnt/s3 -e TOKENIZERS_PARALLELISM=false
     -w /workspace cognitive-core:latest)
 
 # Checkpoint sync: pull before training

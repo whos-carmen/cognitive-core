@@ -11,7 +11,7 @@ mkdir -p "${REPO_ROOT}/train/logs"
 
 docker run --rm --gpus all --shm-size=16g \
     --entrypoint bash \
-    -v "${REPO_ROOT}:/workspace" \
+    -v "${REPO_ROOT}:/workspace" -v /mnt/s3:/mnt/s3 \
     -e TOKENIZERS_PARALLELISM=false \
     -w /workspace \
     cognitive-core:latest \
