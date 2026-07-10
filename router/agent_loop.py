@@ -271,16 +271,11 @@ class Agent:
             # ── Check for tool calls ──
             calls = parse_tool_calls(full_text)
 
-            # Now that we know if there are tool calls, stream the content or a status message
-            if on_token:
-                if calls:
-                    # Don't show raw tool XML — show a brief status instead
-                    tool_names = [c["name"] for c in calls]
-                    on_token("content", f"[using {', '.join(tool_names)}...]")
-                else:
-                    # No tool calls — flush the buffered content
-                    for chunk_text in [content[i:i+50] for i in range(0, len(content), 50)]:
-                        on_token("content", chunk_text)
+            # Now that we know if there are tool calls, stream content or status
+            if on_token and not calls:
+                # No tool calls — flush the buffered content
+                for chunk_text in [content[i:i+50] for i in range(0, len(content), 50)]:
+                    on_token("content", chunk_text)
 
             if not calls:
                 # Check if the model refused or speculated (didn't use tools when it should)
