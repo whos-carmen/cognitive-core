@@ -22,6 +22,7 @@ class ToolCallParser:
       <tool_call>{"name": "...", "arguments": {...}}</tool_call>
       <function name="..." parameters='{"key": "value"}' />
       <function name="...">{"key": "value"}</function>
+      <function name="..."><param name="...">value</param></function>  (native MiniCPM5 format)
     """
 
     # Match MiniCPM5 format: <tool_call>JSON_BLOB</tool_call>
@@ -30,12 +31,18 @@ class ToolCallParser:
     )
 
     # Match Luminia agent format: <function name="..." parameters='JSON' />
+    # Also matches the native MiniCPM5 XML-param format:
+    #   <function name="..."><param name="key">value</param>...</function>
+    # Group 1: name
+    # Group 2: parameters='...' (single-quoted)
+    # Group 3: parameters="..." (double-quoted)
+    # Group 4: text content between > and </function> (JSON or XML params)
     FUNCTION_PATTERN = re.compile(
         r'<function\s+'
         r'name\s*=\s*"([^"]*)"\s*'
         r'(?:parameters\s*=\s*\'([^\']*)\'\s*)?'
         r'(?:parameters\s*=\s*"([^"]*)"\s*)?'
-        r'(?:>([^<]*)</function>|/>)'
+        r'(?:>(.*?)</function>|/>)'
     )
 
     def parse(self, text: str) -> list[dict]:
@@ -64,7 +71,12 @@ class ToolCallParser:
                 params = self._parse_plain_json(match.group(3))
             # Try content between tags (group 4)
             if params is None and match.group(4):
-                params = self._parse_plain_json(match.group(4).strip())
+                inner = match.group(4).strip()
+                # First try parsing as JSON
+                params = self._parse_plain_json(inner)
+                # If not JSON, try parsing as <param name="...">value</param> XML
+                if params is None:
+                    params = self._parse_param_xml(inner)
 
             if params is None:
                 params = {}
@@ -106,6 +118,30 @@ class ToolCallParser:
                 return obj
         except json.JSONDecodeError:
             pass
+        return None
+
+    PARAM_XML_PATTERN = re.compile(
+        r'<param\s+name\s*=\s*"([^"]*)">(.*?)</param>', re.DOTALL
+    )
+
+    def _parse_param_xml(self, text: str) -> dict | None:
+        """Parse <param name="key">value</param> XML into a dict."""
+        matches = self.PARAM_XML_PATTERN.findall(text)
+        if matches:
+            params = {}
+            for name, value in matches:
+                value = value.strip()
+                value = value.strip()
+                # Strip CDATA wrapper
+                if value.startswith("<![CDATA[") and value.endswith("]]>"):
+                    value = value[9:-3]
+                # Try parsing as JSON first
+                try:
+                    value = json.loads(value)
+                except (json.JSONDecodeError, TypeError):
+                    pass
+                params[name] = value
+            return params
         return None
 
 

@@ -17,3 +17,6 @@ logs/
 *.pem
 *.key
 __pycache__/
+
+# Virtual environment
+.venv/
