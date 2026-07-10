@@ -627,8 +627,7 @@ class Agent:
                 collection = db.get_or_create_collection("knowledge")
                 count = collection.count()
                 if count == 0:
-                    return "Knowledge base is empty. Ingest documents with: python rag_pipeline.py ingest <path>"
-                # Get all chunks to build a meaningful summary
+                    return "Knowledge base is empty."
                 all_data = collection.get()
                 sources = {}
                 for meta in (all_data.get("metadatas") or []):
@@ -636,10 +635,24 @@ class Agent:
                         s = meta["source"]
                         sources[s] = sources.get(s, 0) + 1
                 total_sources = len(sources)
-                src_list = "\n".join(f"  {k}: {v} chunks" for k, v in sorted(sources.items(), key=lambda x: -x[1])[:15])
-                return f"Knowledge base: {count} chunks across {total_sources} sources\nSources:\n{src_list}\n\nTo add more: python rag_pipeline.py ingest <file_or_dir> --source-name <name>"
+                # Group by category (prefix before first dash)
+                categories = {}
+                for s, c in sorted(sources.items(), key=lambda x: -x[1]):
+                    cat = s.split("-")[0] if "-" in s else "other"
+                    categories.setdefault(cat, []).append((s, c))
+                # Compact summary: category totals first
+                cat_lines = []
+                for cat, items in sorted(categories.items()):
+                    total = sum(c for _, c in items)
+                    cat_lines.append(f"  {cat}: {total} chunks ({len(items)} sources)")
+                # Top 8 sources detail
+                top_src = sorted(sources.items(), key=lambda x: -x[1])[:8]
+                src_detail = ", ".join(f"{s}={c}" for s, c in top_src)
+                if total_sources > 8:
+                    src_detail += f" ... and {total_sources - 8} more"
+                return f"KB: {count} chunks, {total_sources} sources\nCategories:\n" + "\n".join(cat_lines) + f"\nTop sources: {src_detail}"
             except Exception as e:
-                return f"Error querying knowledge base: {e}"
+                return f"Error: {e}"
 
         return f"Unknown builtin tool: {name}"
 
