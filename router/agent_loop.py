@@ -286,6 +286,7 @@ class Agent:
                     if on_token:
                         for chunk_text in [clean_content[i:i+50] for i in range(0, len(clean_content), 50)]:
                             on_token("content", chunk_text)
+                    self._save_session(session_id, session_history, prompt, clean_content, [])
                     self._write_trace(prompt, "answer_directly", clean_content, reasoning)
                     return clean_content
                 # Check if the model refused or speculated (didn't use tools when it should)
@@ -742,8 +743,8 @@ class Agent:
             response = client.chat.completions.create(
                 model="granite",
                 messages=[
-                    {"role": "system", "content": "You are a research assistant. Given web search results and a question, produce a concise, accurate answer. Cite specific numbers and facts. If the results don't contain the answer, say so."},
-                    {"role": "user", "content": f"Search results:\n{search_results[:3000]}\n\nQuestion: {question}"},
+                    {"role": "system", "content": "You are an AI assistant. Given the following information and a question, produce a concise, accurate answer. Format the information clearly for the user."},
+                    {"role": "user", "content": f"Information:\n{search_results[:3000]}\n\nQuestion: {question}"},
                 ],
                 max_tokens=800,
             )
