@@ -177,6 +177,17 @@ class Agent:
     async def stop(self):
         await self.mcp.disconnect_all()
 
+    def _startup(self):
+        """Synchronous startup: creates a dedicated event loop for the agent."""
+        self._loop = asyncio.new_event_loop()
+        self._loop.run_until_complete(self.start())
+
+    def _run_sync(self, prompt, system=None, on_token=None):
+        """Synchronous run: uses the agent's own event loop, doesn't touch global loop."""
+        return self._loop.run_until_complete(
+            self.run(prompt, system, on_token=on_token)
+        )
+
     async def run(self, prompt: str, system_prompt: str = None, max_turns: int = 5, on_token=None) -> str:
         """Run one prompt through the agent loop.
         
@@ -246,6 +257,12 @@ class Agent:
                 if is_refusal:
                     # Try RAG (Chroma + Granite) first
                     rag_answer = self._query_rag(prompt)
+                    self._write_log(RAG_LOG_STRUCTURED, {
+                        "timestamp": datetime.now().isoformat(),
+                        "type": "rag_query",
+                        "question": prompt,
+                        "has_answer": rag_answer is not None and "not have enough information" not in rag_answer.lower()[:50],
+                    })
                     if rag_answer and "not have enough information" not in rag_answer.lower():
                         self._write_trace(prompt, "needs_knowledge", rag_answer)
                         return rag_answer
@@ -259,8 +276,14 @@ class Agent:
 
                 # No tool calls → cascade: RAG → web search
                 answer = content if content.strip() else reasoning.strip() or "(no response)"
-                if turn == 0 and len(prompt) > 10:
+                if len(prompt) > 10:
                     rag_check = self._query_rag(prompt)
+                    self._write_log(RAG_LOG_STRUCTURED, {
+                        "timestamp": datetime.now().isoformat(),
+                        "type": "rag_query",
+                        "question": prompt,
+                        "has_answer": rag_check is not None and "not have enough information" not in rag_check.lower()[:50],
+                    })
                     if rag_check and "not have enough information" not in rag_check.lower()[:50]:
                         if on_token:
                             on_token("reasoning", "\n[verified against knowledge base]\n")

@@ -150,14 +150,12 @@ class Handler(BaseHTTPRequestHandler):
             import sys as _sys
             _sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
             from agent_loop import Agent
-            global _agent, _agent_loop
+            global _agent
             if '_agent' not in globals() or _agent is None:
-                _agent_loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(_agent_loop)
                 _agent = Agent()
-                _agent_loop.run_until_complete(_agent.start())
-            result = _agent_loop.run_until_complete(
-                _agent.run(prompt, system if system else None, on_token=lambda evt, txt: self._sse(evt, txt))
+                _agent._startup()
+            result = _agent._run_sync(
+                prompt, system if system else None, on_token=lambda evt, txt: self._sse(evt, txt)
             )
             self._sse("done", "")
         except Exception as e:
@@ -648,4 +646,11 @@ if __name__ == "__main__":
     print(f"  Router log: {ROUTER_LOG}")
     print(f"  RAG log:    {RAG_LOG}")
     print(f"  Traces:     {TRACES_PATH}")
+    # Initialize agent loop before accepting requests
+    import sys as _sys
+    _sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from agent_loop import Agent
+    global _agent
+    _agent = Agent()
+    _agent._startup()
     server.serve_forever()
