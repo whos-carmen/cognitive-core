@@ -2,6 +2,9 @@
 # Cognitive Core — SFT Training Launcher
 # Run from the training/ dir: bash scripts/run_sft.sh [mode]
 #   mode = full (3 epochs) | smoke (5 steps) | dpo | monitor | dashboard
+#
+# Checkpoints auto-sync to S3 on start (pull) and finish (push).
+# To watch and push every 5 min: bash scripts/sync_checkpoints.sh watch
 set -euo pipefail
 
 MODE="${1:-full}"
@@ -16,6 +19,12 @@ DOCKER_CMD=(
     -w /workspace
     cognitive-core:latest
 )
+
+SCRIPTS_DIR="${REPO_ROOT}/training/scripts"
+
+# ─── Checkpoint sync: pull before training ───
+echo "=== Syncing checkpoints from S3 ==="
+bash "${SCRIPTS_DIR}/sync_checkpoints.sh" pull 2>/dev/null || echo "S3 sync skipped (no prior checkpoints)"
 
 case "$MODE" in
   smoke)
@@ -87,3 +96,8 @@ case "$MODE" in
     exit 1
     ;;
 esac
+
+# ─── Checkpoint sync: push after training ───
+echo ""
+echo "=== Training done. Pushing checkpoints to S3 ==="
+bash "${SCRIPTS_DIR}/sync_checkpoints.sh" push 2>/dev/null || echo "S3 push skipped"
