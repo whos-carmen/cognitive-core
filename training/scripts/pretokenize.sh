@@ -14,6 +14,7 @@ S3_PREFIX="${S3_BUCKET}/cognitive-core"
 DATASET_DIR="${REPO_ROOT}/dataset"
 TOKENIZED_DIR="${DATASET_DIR}/train_v4_tokenized"
 TRAIN_FILE="${DATASET_DIR}/train_v4.jsonl"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 PUSH=false
 PULL=false
@@ -50,43 +51,11 @@ docker run --rm --gpus all --shm-size=16g \
     -e TOKENIZERS_PARALLELISM=false \
     -w /workspace \
     cognitive-core:latest -c "
-import sys, json, os
-sys.path.insert(0, '/workspace/code/data')
-import schema
-from transformers import AutoTokenizer
-from datasets import Dataset, Features, Sequence, Value
-
-tok = AutoTokenizer.from_pretrained('/workspace/models/merged', trust_remote_code=True)
-ML = 24576
-
-def _gen(path):
-    with open(path, encoding='utf-8') as f:
-        for ln in f:
-            ln = ln.strip()
-            if not ln:
-                continue
-            try:
-                ex = json.loads(ln)
-            except Exception:
-                continue
-            enc = schema.encode_example({'messages': ex['messages'], 'tools': ex.get('tools')}, tok, max_len=ML)
-            if enc:
-                yield {'input_ids': enc['input_ids'], 'labels': enc['labels'],
-                       'attention_mask': enc['attention_mask']}
-
-feats = Features({
-    'input_ids': Sequence(Value('int32')),
-    'labels': Sequence(Value('int32')),
-    'attention_mask': Sequence(Value('int8'))
-})
-
-print('Loading and tokenizing...')
-ds = Dataset.from_generator(_gen, gen_kwargs={'path': '/workspace/dataset/train_v4.jsonl'}, features=feats)
-print('Tokenized {} examples'.format(len(ds)))
-
-print('Saving to disk...')
-ds.save_to_disk('/workspace/dataset/train_v4_tokenized')
-print('Done!')
+mkdir -p /workspace/dataset/train_v4_tokenized
+python /workspace/training/scripts/pretokenize.py \
+    /workspace/dataset/train_v4.jsonl \
+    /workspace/dataset/train_v4_tokenized \
+    --model-path /workspace/models/merged
 "
 
 echo ""
@@ -102,5 +71,5 @@ if [ "$PUSH" = true ]; then
 fi
 
 echo ""
-echo "To use pre-tokenized data in training, run:"
-echo "  bash scripts/run_sft.sh full --pretokenized"
+echo "To use pre-tokenized data:"
+echo "  bash scripts/run_sft.sh full --pretokenized dataset/train_v4_tokenized"
