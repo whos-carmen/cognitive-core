@@ -164,6 +164,7 @@ class Agent:
         self._reranker = None  # lazy-loaded
         self._project_root = os.path.dirname(os.path.abspath(__file__))
         self._project_tree = ""  # populated at startup
+        self._gpu_name = "unknown GPU"  # populated at startup
         # Load agent model config (optional tool-specialized model)
         self._agent_cfg = {}
         try:
@@ -219,7 +220,7 @@ class Agent:
                 system_prompt = "You are a router. Use tools when needed. Explore your own codebase to understand yourself."
             # Append dynamic project context
             if self._project_tree:
-                system_prompt += f"\n\n## Environment\nProject: {self._project_root}\nFiles:\n{self._project_tree}"
+                system_prompt += f"\n\n## Environment\nGPU: {self._gpu_name}\nProject: {self._project_root}\nFiles:\n{self._project_tree}"
 
         messages = [
             {"role": "system", "content": system_prompt},
