@@ -36,7 +36,8 @@ def main():
     ap.add_argument("--accum", type=int, default=24)
     ap.add_argument("--lr", type=float, default=1e-5)
     ap.add_argument("--max_steps", type=int, default=-1)  # >0 = smoke test
-    ap.add_argument("--train_cap", type=int, default=12288)  # drop examples longer than this (VRAM: logits=L*vocab)
+    ap.add_argument("--train_cap", type=int, default=12288)
+ap.add_argument("--pretokenized", type=str, default=None, help="Path to pre-tokenized dataset (skips tokenization)")  # drop examples longer than this (VRAM: logits=L*vocab)
     ap.add_argument("--model", default=os.path.join(PROJ, "model", "final"))
     ap.add_argument("--out", default=os.path.join(PROJ, "train", "outputs", "sft"))
     ap.add_argument("--train_file", default=os.path.join(PROJ, "data", "built", "train.jsonl"))  # override for SFT-v2 (e.g. retail-dropped mix)
@@ -88,16 +89,23 @@ def main():
     feats = Features({"input_ids": Sequence(Value("int32")), "labels": Sequence(Value("int32")),
                       "attention_mask": Sequence(Value("int8"))})
     built = os.path.join(PROJ, "data", "built")
-    train_path = args.train_file
-    # cache keyed by train-file name so a different mix (e.g. train_v2) NEVER reuses stale tokenization
-    cache = os.path.join(PROJ, ".hfcache", "sft_arrow_" + os.path.splitext(os.path.basename(train_path))[0])
-    log(f"train_file={train_path}  cache={cache}")
-    train_ds = Dataset.from_generator(_gen, gen_kwargs={"path": train_path},
-                                      features=feats, cache_dir=cache)
-    eval_ds = None
-    ep = os.path.join(built, "eval.jsonl")
-    if os.path.exists(ep):
-        eval_ds = Dataset.from_generator(_gen, gen_kwargs={"path": ep}, features=feats, cache_dir=cache)
+
+    # Load pre-tokenized data if available (instant, no tokenization needed)
+    if args.pretokenized and os.path.isdir(args.pretokenized):
+        log(f"Loading pre-tokenized dataset from {args.pretokenized}")
+        train_ds = Dataset.load_from_disk(os.path.join(args.pretokenized))
+        log(f"Loaded {len(train_ds)} pre-tokenized examples")
+        eval_ds = None
+    else:
+        train_path = args.train_file
+        cache = os.path.join(PROJ, ".hfcache", "sft_arrow_" + os.path.splitext(os.path.basename(train_path))[0])
+        log(f"train_file={train_path}  cache={cache}")
+        train_ds = Dataset.from_generator(_gen, gen_kwargs={"path": train_path},
+                                          features=feats, cache_dir=cache)
+        eval_ds = None
+        ep = os.path.join(built, "eval.jsonl")
+        if os.path.exists(ep):
+            eval_ds = Dataset.from_generator(_gen, gen_kwargs={"path": ep}, features=feats, cache_dir=cache)
     log(f"tokenized: train={len(train_ds)} eval={len(eval_ds) if eval_ds else 0}")
     _cap = args.train_cap
     train_ds = train_ds.filter(lambda b: [len(x) <= _cap for x in b["input_ids"]], batched=True, batch_size=2000)
