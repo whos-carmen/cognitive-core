@@ -25,51 +25,66 @@ are needed — most requests never reach it.
 
 ---
 
-## Serving Layer — Recommendation: SGLang + llama.cpp Backup
+## Serving Layer — Reality: llama.cpp with ROCm
 
-### Why SGLang for MiniCPM5
+### The Original Plan: SGLang
 
-SGLang is the **recommended backend** by the OpenBMB team for MiniCPM5. The reason is
+SGLang was the **recommended backend** by the OpenBMB team for MiniCPM5. The reason is
 specific: MiniCPM5 emits tool calls in XML format (`<tool_call>...</tool_call>`),
 and SGLang has a **native parser** (`--tool-call-parser minicpm5`) that converts
 them to standard OpenAI-compatible tool_calls automatically. llama.cpp doesn't
 have this parser — you'd need to handle the XML format yourself (use
 [../eval/tool_parser.py](../eval/tool_parser.py) if you go that route).
 
-Other SGLang advantages:
-- **RadixAttention prefix cache** — reuses KV cache across requests with
-  shared prefixes, reducing latency and memory by ~30-50% for multi-turn
-- **Highest token throughput** in 2025-2026 benchmarks vs vLLM, TGI
-- **OpenAI-compatible API** — works with any client
+### Why SGLang Didn't Work
 
-### The Catch
+SGLang's ROCm support relies on `sgl_kernel`, which contains CUDA-like C++ kernels
+compiled for specific AMD GPU architectures. As of July 2026, `sgl_kernel` only
+targets **gfx942 (MI300/MI325)** and **gfx950 (MI350)** — AMD data-center GPUs.
+Consumer RDNA3 GPUs like the **7900 XTX (gfx1100)** are not supported.
 
-The `--tool-call-parser minicpm5` feature requires a **SGLang build newer than
-the latest pip release** as of June 2026. Plain chat completions work fine on the
-pip release — but tool parsing needs a `pip install` from the main branch or the
-official Docker image.
+Attempted workarounds that failed:
 
-### Alternative: llama.cpp (Simplicity Pick)
+1. **Force gfx1100 target in setup_rocm.py** — The kernel code uses MI300/MI350-specific
+   instructions that don't exist on gfx1100. Compilation fails.
+2. **Install aiter (AMD AI Edge Toolkit)** — The JIT build crashed because the
+   `hipcc` compiler flags are incompatible between ROCm 7.2 and what aiter expects.
+3. **SGLang pip release** — The `--tool-call-parser minicpm5` feature doesn't exist
+   in the pip release (it requires building from main).
 
-If you don't need tool-call parsing (you handle the XML yourself or use a
-custom format), llama.cpp is:
-- Single binary, no Python runtime
-- GPU-first, handles model swapping
-- Easy to run multiple servers on different ports
+**Bottom line:** If you have a consumer AMD GPU (RX 7900 series, RX 6000/7000 series),
+use llama.cpp. If you have an AMD Instinct MI300/MI350, SGLang is viable.
 
-### Recommendation
+### What We Use Instead: llama.cpp with ROCm
 
-| If you... | Pick |
-|---|---|
-| Want native tool parsing for MiniCPM5 | **SGLang** (build from main branch) |
-| Want simplicity, don't mind XML handling | **llama.cpp** with [custom parser](../eval/tool_parser.py) |
+llama.cpp with ROCm is the working backend for consumer AMD GPUs. It:
+- Has native gfx1100 support — compiles and runs out of the box
+- Achieves ~280-300 tok/s on a 7900 XTX with MiniCPM5-1B Q8_0
+- Exposes an OpenAI-compatible API — works with any client
+- Requires client-side tool call parsing (handled by [../eval/tool_parser.py](../eval/tool_parser.py))
 
-A unified parser that handles both `<tool_call>` and `<function>` XML formats
-is included at [eval/tool_parser.py](../eval/tool_parser.py). It works with any
-serving layer — run it on the client side, or integrate it into your agent loop.
+```bash
+# Build for consumer AMD GPU
+git clone https://github.com/ggml-org/llama.cpp.git
+cd llama.cpp && mkdir build && cd build
+cmake .. -DGGML_HIP=ON -DGGML_HIP_GRAPH=OFF \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DAMDGPU_TARGETS="gfx1100"    # or gfx1030 (RX 6900), gfx942 (MI300), etc.
+cmake --build . --config Release -j$(nproc)
+```
 
-All four expose an OpenAI-compatible API, so the choice doesn't affect the
-RAG pipeline. Switch later if needed.
+### Recommendation (Updated)
+
+| If you have... | Pick | Why |
+|---|---|---|
+| AMD consumer GPU (RX 7900 XTX, etc.) | **llama.cpp** + [custom parser](../eval/tool_parser.py) | SGLang kernels don't support gfx1100 |
+| AMD data-center GPU (MI300/MI350) | **SGLang** (build from main) | Native tool parsing, higher throughput |
+| NVIDIA GPU | **SGLang** or **llama.cpp** | Both work, SGLang has better tool support |
+
+A unified parser that handles all three tool call XML formats (`<tool_call>` JSON,
+`<function>` attribute JSON, and `<function><param>` native XML) is included at
+[eval/tool_parser.py](../eval/tool_parser.py). It works with any serving layer —
+run it on the client side, or integrate it into your agent loop.
 
 ### Layout
 

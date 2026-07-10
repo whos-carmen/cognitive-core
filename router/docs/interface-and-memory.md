@@ -301,16 +301,29 @@ displays it in real-time.
 
 All on the 7900 XTX machine. The remote client just needs a browser or terminal.
 
+> **Note on serving backend:** The router runs on **llama.cpp with ROCm**, not
+> SGLang. SGLang's `sgl_kernel` only supports AMD MI300/MI350 data-center GPUs
+> (gfx942/gfx950), not consumer RDNA3 GPUs (gfx1100) like the 7900 XTX. See
+> [rag-architecture.md](rag-architecture.md) for details.
+
 ---
 
 ## VRAM Budget (Updated)
 
 | Component | VRAM | Where |
 |---|---|---|
-| MiniCPM5-1B Q8_0 (router) | ~1.1 GB | GPU (always loaded) |
+| MiniCPM5-1B Q8_0 (router, llama.cpp) | ~1.1 GB | GPU (always loaded) |
 | Granite 4.1-8B Q4_K_M (RAG) | ~5.3 GB | GPU (on demand) |
 | Granite embedding 149M | ~0.3 GB | GPU or CPU (17 GB free either way) |
 | KV cache (32K × 2) | ~2-3 GB | GPU (shared) |
 | Runtime Dashboard | ~0 GB | CPU (no GPU needed) |
 | Chroma DB | ~0 GB | CPU (no GPU needed) |
 | **Total** | **~9 GB** | **15 GB free** |
+
+### Required Env Vars for the 7900 XTX
+
+| Variable | Value | Why |
+|---|---|---|
+| `HSA_OVERRIDE_GFX_VERSION` | `11.0.0` | Forces gfx1100 compatibility for ROCm 6.x PyTorch wheels |
+| `ROCR_VISIBLE_DEVICES` | `0` | Hides the AMD Radeon iGPU — without this, model allocation crashes |
+| `AITER_TRITON_ONLY` | `1` | (Older SGLang builds only) Skips aiter C++ JIT build |
