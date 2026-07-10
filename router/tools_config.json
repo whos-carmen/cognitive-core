@@ -14,6 +14,14 @@
     }
   },
 
+  "agent_model": {
+    "description": "Optional small model specialized for tool generation. Used when the router fails to generate correct tool calls.",
+    "enabled": false,
+    "url": "http://localhost:8083/v1",
+    "model": "",
+    "api_key": "not-needed"
+  },
+
   "tool_mappings": {
     "web_search": {
       "description": "Search the web for current information",
@@ -79,7 +87,7 @@
       "param_mapping": {}
     },
     "rag_query": {
-      "description": "Query the RAG knowledge base (Chroma + Granite 4.1-8B) for answers from ingested documentation. Use this for questions about the project's code, tools, configuration, and documentation.",
+      "description": "Query the RAG knowledge base (Chroma + Granite 4.1-8B) for answers from ingested documentation.",
       "type": "builtin",
       "param_mapping": {
         "query": "query"

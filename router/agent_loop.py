@@ -164,6 +164,15 @@ class Agent:
         self._reranker = None  # lazy-loaded
         self._project_root = os.path.dirname(os.path.abspath(__file__))
         self._project_tree = ""  # populated at startup
+        # Load agent model config (optional tool-specialized model)
+        self._agent_cfg = {}
+        try:
+            import json as _j
+            with open(CONFIG_PATH) as _f:
+                _cfg = _j.load(_f)
+            self._agent_cfg = _cfg.get("agent_model", {})
+        except Exception:
+            pass
 
     async def start(self):
         print("Connecting to MCP servers...")
@@ -309,7 +318,15 @@ class Agent:
                         self._save_session(session_id, session_history, prompt, rag_check, [])
                         self._write_trace(prompt, "needs_knowledge", rag_check)
                         return rag_check
-                    # RAG didn't have it → try local file search
+                    # RAG didn't have it → try agent model for tool generation
+                    if self._agent_cfg.get("enabled"):
+                        agent_tool = self._query_agent(f"Generate a tool call XML to answer: {prompt}\nAvailable tools: web_search, rag_query, file_search, shell_exec. Output format: <function name=\"tool_name\"><param name=\"param\">value</param></function>")
+                        if agent_tool and ("<function" in agent_tool):
+                            if on_token:
+                                on_token("reasoning", "\n[agent model generated tool call]\n")
+                            messages.append({"role": "assistant", "content": agent_tool})
+                            continue
+                    # Agent didn't help → try local file search
                     if on_token:
                         on_token("reasoning", "\n[knowledge base empty, checking local files...]\n")
                     local_result = self._quick_local_search(prompt)
@@ -433,6 +450,21 @@ class Agent:
         except Exception:
             pass
         return None
+
+    def _query_agent(self, prompt: str) -> str | None:
+        "Send a prompt to the optional agent model for tool generation. Returns None if not configured."
+        if not self._agent_cfg.get("enabled") or not self._agent_cfg.get("url"):
+            return None
+        try:
+            client = OpenAI(base_url=self._agent_cfg["url"], api_key=self._agent_cfg.get("api_key", "not-needed"))
+            model = self._agent_cfg.get("model") or None
+            response = client.chat.completions.create(
+                model=model, messages=[{"role": "user", "content": prompt}], max_tokens=300,
+            )
+            return response.choices[0].message.content
+        except Exception as e:
+            print(f"  Agent model error: {e}")
+            return None
 
     def _exec_builtin(self, name, params, mapping):
         """Execute a built-in tool (shell command, file search, etc.)."""
