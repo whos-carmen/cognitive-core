@@ -92,10 +92,10 @@ bash "${SCRIPTS_DIR}/sync_checkpoints.sh" pull 2>/dev/null || echo "S3 sync skip
 
 case "$MODE" in
   smoke)
-    CMD="python /workspace/code/train/sft.py --model /workspace/models/merged --train_file /workspace/dataset/train_v4.jsonl --out /workspace/train/outputs/sft_smoke --max_steps 5 --bsz 1 --accum 1 --max_len 4096 --train_cap 4096"
+    CMD="python /workspace/code/train/sft.py --model /workspace/models/merged --train_file /workspace/dataset/train_v4.jsonl --out /workspace/train/outputs/sft_smoke --max_steps 5 --bsz 1 --accum 1 --max_len 4096 --train_cap 4096 ${PRETOKENIZED:+--pretokenized ${PRETOKENIZED}}"
     ;;
   full)
-    CMD="python /workspace/code/train/sft.py --model /workspace/models/merged --train_file /workspace/dataset/train_v4.jsonl --out /workspace/train/outputs/sft_claude_agent --epochs 3 --neftune ${NEFTUNE} --bsz ${BSZ} --accum ${ACCUM} --lr ${LR} --lr_scheduler cosine --warmup_ratio 0.05 --weight_decay 0.01 --max_grad_norm 1.0 --max_len ${MAX_LEN} --train_cap ${TRAIN_CAP} --seed 42 --pretokenized ${PRETOKENIZED}"
+    CMD="python /workspace/code/train/sft.py --model /workspace/models/merged --train_file /workspace/dataset/train_v4.jsonl --out /workspace/train/outputs/sft_claude_agent --epochs 3 --neftune ${NEFTUNE} --bsz ${BSZ} --accum ${ACCUM} --lr ${LR} --lr_scheduler cosine --warmup_ratio 0.05 --weight_decay 0.01 --max_grad_norm 1.0 --max_len ${MAX_LEN} --train_cap ${TRAIN_CAP} --seed 42 ${PRETOKENIZED:+--pretokenized ${PRETOKENIZED}}"
     ;;
   dpo)
     CMD="python /workspace/code/train/dpo.py --model /workspace/train/outputs/sft_claude_agent --data /workspace/dataset/dpo_onpolicy_v4.jsonl --out /workspace/train/outputs/final-cognitive-core --beta 0.1 --lr 1e-6 --lr_scheduler cosine --warmup_ratio 0.05 --weight_decay 0.01 --max_grad_norm 1.0 --epochs 3 --accum 8 --seed 42"
@@ -125,7 +125,15 @@ if [ "$BACKGROUND" = true ]; then
         exit 0
     fi
     mkdir -p "${REPO_ROOT}/train/logs"
-    tmux new-session -d -s "$SESSION" "bash ${SCRIPTS_DIR}/run_bg.sh ${REPO_ROOT} ${MODE} ${CMD}"
+    # Write CMD to temp script to avoid shell quoting issues in tmux
+    TMUX_SCRIPT=$(mktemp /tmp/cogcore-XXXXXX.sh)
+    cat > "$TMUX_SCRIPT" << TMUXEOF
+#!/bin/bash
+bash ${SCRIPTS_DIR}/run_bg.sh ${REPO_ROOT} ${MODE} "${CMD}"
+TMUXEOF
+    chmod +x "$TMUX_SCRIPT"
+    tmux new-session -d -s "$SESSION" "bash $TMUX_SCRIPT"
+    rm -f "$TMUX_SCRIPT"
     echo "=== Running $MODE in tmux session: $SESSION ==="
     echo "  Attach:   tmux attach -t $SESSION"
     echo "  Logs:     tail -f ${REPO_ROOT}/train/logs/${MODE}.log"
