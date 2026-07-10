@@ -21,6 +21,12 @@ for pat in "${EXCLUDES[@]}"; do
 done
 
 push_checkpoints() {
+    echo "=== Pushing pre-tokenized data to S3 ==="
+    if [ -d "${REPO_ROOT}/dataset/train_v4_tokenized" ]; then
+        aws s3 sync "${REPO_ROOT}/dataset/train_v4_tokenized" "${S3_PREFIX}/dataset/train_v4_tokenized" --quiet 2>/dev/null || true
+        echo "  Pre-tokenized data synced"
+    fi
+
     echo "=== Pushing checkpoints to S3 ==="
     for dir in "${DIRS[@]}"; do
         local_path="${REPO_ROOT}/${dir}"
@@ -36,6 +42,13 @@ push_checkpoints() {
 }
 
 pull_checkpoints() {
+    echo "=== Pulling pre-tokenized data from S3 ==="
+    if aws s3 ls "${S3_PREFIX}/dataset/train_v4_tokenized/" >/dev/null 2>&1; then
+        mkdir -p "${REPO_ROOT}/dataset"
+        aws s3 sync "${S3_PREFIX}/dataset/train_v4_tokenized" "${REPO_ROOT}/dataset/train_v4_tokenized" --quiet 2>/dev/null || true
+        echo "  Pre-tokenized data synced"
+    fi
+
     echo "=== Pulling checkpoints from S3 ==="
     for dir in "${DIRS[@]}"; do
         local_path="${REPO_ROOT}/${dir}"
