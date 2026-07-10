@@ -625,6 +625,18 @@ class Agent:
             pass
 
     @staticmethod
+    def load_session(session_id: str) -> list:
+        """Load session messages from disk."""
+        path = os.path.join(SESSIONS_DIR, f"{session_id}.json")
+        if not os.path.exists(path):
+            return []
+        try:
+            with open(path) as f:
+                return json.load(f)
+        except Exception:
+            return []
+
+    @staticmethod
     def list_sessions():
         """Return list of available sessions with timestamps."""
         sessions = []

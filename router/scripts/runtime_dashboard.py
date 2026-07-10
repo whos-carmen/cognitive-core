@@ -127,6 +127,18 @@ class Handler(BaseHTTPRequestHandler):
             _sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
             from agent_loop import Agent
             self.send_json({"sessions": Agent.list_sessions()})
+        elif path == "/api/session":
+            from urllib.parse import parse_qs
+            qs = parse_qs(parsed.query)
+            sid = qs.get("id", [None])[0]
+            if sid:
+                import sys as _sys
+                _sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+                from agent_loop import Agent
+                msgs = Agent.load_session(sid)
+                self.send_json({"id": sid, "messages": msgs or []})
+            else:
+                self.send_json({"error": "no session id"})
         else:
             self.send_html()
 
@@ -661,7 +673,22 @@ let currentSessionId = null;
 function loadSession(sid) {
   currentSessionId = sid;
   document.getElementById('sessionLabel').textContent = sid.slice(0,24);
-  document.getElementById('chatOutput').innerHTML = '<div class="chat-status">Loaded session: ' + sid.slice(0,24) + '</div>';
+  const out = document.getElementById('chatOutput');
+  out.innerHTML = '<div class="chat-status">Loading session: ' + sid.slice(0,24) + '...</div>';
+  fetch('/api/session?id=' + encodeURIComponent(sid)).then(r => r.json()).then(d => {
+    out.innerHTML = '<div class="chat-status">Session: ' + sid.slice(0,24) + '</div>';
+    (d.messages || []).forEach(m => {
+      const div = document.createElement('div');
+      div.className = m.role === 'user' ? 'chat-content' : (m.role === 'assistant' ? 'chat-content' : 'chat-tool');
+      if (m.role === 'user') div.innerHTML = '\u25b6 <b>' + esc(m.content) + '</b>';
+      else if (m.role === 'assistant') div.textContent = m.content.slice(0,500);
+      else div.textContent = '[' + m.role + '] ' + (m.content || '').slice(0,200);
+      out.appendChild(div);
+    });
+    out.scrollTop = out.scrollHeight;
+  }).catch(() => {
+    out.innerHTML += '<div class="chat-error">Failed to load session.</div>';
+  });
 }
 
 function newSession() {
