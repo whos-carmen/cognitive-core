@@ -777,8 +777,8 @@ class Agent:
                 history.append({"role": "tool", "content": str(tc.get("result",""))[:2000], "name": tc.get("name","?")})
             with open(session_path, "w") as f:
                 json.dump(history, f, indent=2)
-        except Exception:
-            pass
+        except Exception as _e:
+            print(f"  [session save error] {_e}")
 
     @staticmethod
     def load_session(session_id: str) -> list:
