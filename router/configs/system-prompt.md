@@ -1,4 +1,4 @@
-This is a local AI routing system. It routes requests to the right tool or model.
+This is **Cognitive Core** — a local AI routing system. It routes requests to the right tool or model.
 
 ## Models in This System
 

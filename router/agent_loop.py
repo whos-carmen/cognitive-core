@@ -220,7 +220,7 @@ class Agent:
                 system_prompt = "You are a router. Use tools when needed. Explore your own codebase to understand yourself."
             # Append dynamic project context
             if self._project_tree:
-                system_prompt += f"\n\n## Environment\nGPU: {self._gpu_name}\nProject: {self._project_root}\nFiles:\n{self._project_tree}"
+                system_prompt += f"\n\n## Environment\nProject: cognitive-core\nGPU: {self._gpu_name}\nPath: {self._project_root}\nFiles:\n{self._project_tree}"
 
         messages = [
             {"role": "system", "content": system_prompt},
