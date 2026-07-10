@@ -206,7 +206,7 @@ class Agent:
                 system_prompt = "You are a cognitive core. Use tools when needed."
             # Append dynamic project context
             if self._project_tree:
-                system_prompt += f"\n\n## Your Environment\nYou are running in: {self._project_root}\nLocal project files available:\n{self._project_tree}\n\nSearch local files FIRST before searching the web. Use shell_exec or file_search for local file queries like finding files, searching code, or reading project documentation."
+                system_prompt += f"\n\n## Your Environment\nYou are running in: {self._project_root}\nLocal project files available:\n{self._project_tree}\n\nIMPORTANT: This 'cognitive-core' project is a LOCAL codebase. Answer questions about it using ONLY the local files and tools below. Do NOT use your training data about any other product, company, or concept named 'Cognitive Core' — they are unrelated.\n\nSearch local files FIRST before searching the web. Use shell_exec or file_search for local file queries like finding files, searching code, or reading project documentation."
 
         messages = [
             {"role": "system", "content": system_prompt},
