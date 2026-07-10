@@ -83,15 +83,15 @@ def rocm_vram() -> str:
         out = subprocess.check_output(
             ["rocm-smi", "--showmeminfo", "vram"], text=True, stderr=subprocess.DEVNULL
         )
-        total_g = used_g = 0
+        total_mb = used_mb = 0
         for line in out.splitlines():
             if "VRAM Total Memory" in line and "GPU[0]" in line:
-                total_g = int(line.split(":")[-1].strip()) // (1024**3)
+                total_mb = int(line.split(":")[-1].strip()) // (1024*1024)
             if "VRAM Total Used Memory" in line and "GPU[0]" in line:
-                used_g = int(line.split(":")[-1].strip()) // (1024**3)
-        if total_g == 0:
+                used_mb = int(line.split(":")[-1].strip()) // (1024*1024)
+        if total_mb == 0:
             return "N/A"
-        return f"{used_g}G / {total_g}G"
+        return f"{used_mb}MB / {total_mb}MB"
     except Exception:
         return "N/A"
 

@@ -475,6 +475,29 @@ class Agent:
             except Exception as e:
                 return f"Error: {e}"
 
+        if name == "rag_status":
+            try:
+                import chromadb
+                db = chromadb.PersistentClient(path=CHROMA_PATH)
+                collection = db.get_or_create_collection("knowledge")
+                count = collection.count()
+                if count == 0:
+                    return "Knowledge base is empty."
+                samples = collection.peek()
+                sources = {}
+                for meta in (samples.get("metadatas") or []):
+                    if meta and "source" in meta:
+                        s = meta["source"]
+                        sources[s] = sources.get(s, 0) + 1
+                src_list = "\n".join(f"  {k}: {v} chunks" for k, v in sorted(sources.items(), key=lambda x: -x[1])[:10])
+                sample_preview = ""
+                docs = samples.get("documents") or []
+                if docs:
+                    sample_preview = f"\nSample entries:\n" + "\n---\n".join(d[:100] for d in docs[:2])
+                return f"Knowledge base: {count} total chunks\nSources:\n{src_list}\n{sample_preview}"
+            except Exception as e:
+                return f"Error querying knowledge base: {e}"
+
         return f"Unknown builtin tool: {name}"
 
     def _get_reranker(self):

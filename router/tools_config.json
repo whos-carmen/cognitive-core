@@ -72,6 +72,11 @@
       "default_params": {
         "path": "/home/pixie/cognitive-core"
       }
+    },
+    "rag_status": {
+      "description": "Show the current state of the RAG knowledge base: total chunks, sample entries, what sources are stored",
+      "type": "builtin",
+      "param_mapping": {}
     }
   }
 }
