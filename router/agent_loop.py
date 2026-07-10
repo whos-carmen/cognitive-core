@@ -303,7 +303,7 @@ class Agent:
 
                 # No tool calls → cascade: RAG → web search
                 answer = content if content.strip() else reasoning.strip() or "(no response)"
-                if len(prompt) > 10:
+                if len(prompt) > 15:
                     rag_check = self._query_rag(prompt)
                     self._write_log(RAG_LOG_STRUCTURED, {
                         "timestamp": datetime.now().isoformat(),

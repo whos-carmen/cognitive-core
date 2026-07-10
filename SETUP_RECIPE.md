@@ -61,7 +61,7 @@ uv pip uninstall torchcodec
 # All stored in ~/.cache/huggingface/hub/
 
 # Router model (GGUF Q8_0)
-python -c "from huggingface_hub import hf_hub_download; print(hf_hub_download('openbmb/MiniCPM5-1B-GGUF', 'MiniCPM5-1B-Q8_0.gguf'))"
+python -c "from huggingface_hub import hf_hub_download; print(hf_hub_download('Luminia/MiniCPM5-1B-Agent-GGUF', 'MiniCPM5-1B-Agent-v4-Q8_0.gguf'))"
 
 # RAG model (GGUF Q4_K_M)
 python -c "from huggingface_hub import hf_hub_download; print(hf_hub_download('mrutkows/granite-4.1-8b-GGUF', 'granite-4.1-8b-Q4_K_M.gguf'))"
