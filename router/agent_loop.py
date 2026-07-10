@@ -168,8 +168,12 @@ class Agent:
     async def stop(self):
         await self.mcp.disconnect_all()
 
-    async def run(self, prompt: str, system_prompt: str = None, max_turns: int = 5) -> str:
-        """Run one prompt through the agent loop."""
+    async def run(self, prompt: str, system_prompt: str = None, max_turns: int = 5, on_token=None) -> str:
+        """Run one prompt through the agent loop.
+        
+        If on_token is provided, it's called with (event_type, text) for streaming:
+          event_type = "reasoning" | "content" | "done" | "tool_call"
+        """
         self._t_start = datetime.now()
         if system_prompt is None:
             sp_path = os.path.join(os.path.dirname(__file__), "configs", "system-prompt.md")
@@ -185,16 +189,29 @@ class Agent:
         ]
 
         for turn in range(max_turns):
-            # ── Get model response ──
+            # ── Get model response (streaming) ──
+            content = ""
+            reasoning = ""
             response = self.client.chat.completions.create(
                 model="minicpm5",
                 messages=messages,
                 max_tokens=500,
-                stream=False,
+                stream=True,
             )
-            msg = response.choices[0].message
-            content = msg.content or ""
-            reasoning = msg.reasoning_content or ""
+            for chunk in response:
+                if not chunk.choices:
+                    continue
+                delta = chunk.choices[0].delta
+                c = delta.content or ""
+                r = getattr(delta, "reasoning_content", None) or ""
+                if c:
+                    content += c
+                    if on_token:
+                        on_token("content", c)
+                if r:
+                    reasoning += r
+                    if on_token:
+                        on_token("reasoning", r)
             full_text = content + reasoning
 
             # ── Check for tool calls ──
@@ -263,7 +280,7 @@ class Agent:
 
                 # For web search tools: synthesize results with Granite instead of 1B router
                 if tool_name in ("web_search", "web_fetch", "tavily_search", "tavily_research"):
-                    synthesis = self._synthesize(prompt, result)
+                    synthesis = self._synthesize(prompt, result, on_token)
                     return synthesis
 
                 # For other tools: feed result back to router model
@@ -356,7 +373,7 @@ class Agent:
             print(f"  RAG error: {e}")
             return None
 
-    def _synthesize(self, question: str, search_results: str) -> str:
+    def _synthesize(self, question: str, search_results: str, on_token=None) -> str:
         """Use Granite 4.1-8B to synthesize clean answer from search results."""
         try:
             client = OpenAI(base_url=RAG_URL, api_key="not-needed")
@@ -369,6 +386,8 @@ class Agent:
                 max_tokens=500,
             )
             answer = response.choices[0].message.content or "(no response)"
+            if on_token:
+                on_token("content", "\n\n" + answer)
             self._write_trace(question, "answer_directly", answer)
             return answer
         except Exception as e:

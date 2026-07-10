@@ -150,8 +150,9 @@ class Handler(BaseHTTPRequestHandler):
                 asyncio.set_event_loop(_agent_loop)
                 _agent = Agent()
                 _agent_loop.run_until_complete(_agent.start())
-            result = _agent_loop.run_until_complete(_agent.run(prompt, system if system else None))
-            self._sse("content", result)
+            result = _agent_loop.run_until_complete(
+                _agent.run(prompt, system if system else None, on_token=lambda evt, txt: self._sse(evt, txt))
+            )
             self._sse("done", "")
         except Exception as e:
             self._sse("error", str(e))
