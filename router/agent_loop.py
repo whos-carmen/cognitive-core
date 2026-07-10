@@ -219,7 +219,7 @@ class Agent:
                 system_prompt = "You are a router. Use tools when needed. Explore your own codebase to understand yourself."
             # Append dynamic project context
             if self._project_tree:
-                system_prompt += f"\n\n## Environment\nProject root: {self._project_root}\nProject structure:\n{self._project_tree}\n\nAvailable tools: web_search (web), web_fetch (web), shell_exec (local), file_search (local), rag_query (knowledge base), rag_status (knowledge base). For questions about project code/docs, use rag_query. Search local files before the web."
+                system_prompt += f"\n\n## Environment\nProject: {self._project_root}\nFiles:\n{self._project_tree}"
 
         messages = [
             {"role": "system", "content": system_prompt},
