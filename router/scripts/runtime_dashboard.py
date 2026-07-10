@@ -721,6 +721,78 @@ setInterval(update, 3000);
 update();
 setInterval(fetchSessions, 5000);
 </script>
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script>
+// Override sendChat content rendering to use markdown
+const origSendChat = sendChat;
+sendChat = function() {
+  const input = document.getElementById('chatInput');
+  const prompt = input.value.trim();
+  if (!prompt) return;
+  input.value = '';
+  const out = document.getElementById('chatOutput');
+  out.innerHTML += '<div class="chat-status" style="color:#4af;">\u25b6 <b>' + esc(prompt) + '</b></div>';
+
+  fetch('/api/chat', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({prompt, session_id: currentSessionId})
+  }).then(async response => {
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+    let eventType = '';
+    let reasoningDiv = null;
+    let contentDiv = null;
+    let contentBuffer = '';
+
+    while (true) {
+      const {done, value} = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, {stream: true});
+      const msgs = buf.split('\n\n');
+      buf = msgs.pop() || '';
+
+      for (const msg of msgs) {
+        const lines = msg.split('\n');
+        let data = '';
+        for (const line of lines) {
+          if (line.startsWith('event: ')) eventType = line.slice(7).trim();
+          else if (line.startsWith('data: ')) data = line.slice(6);
+        }
+        if (!data) continue;
+        try { data = JSON.parse(data); } catch(e) {}
+
+        if (eventType === 'reasoning') {
+          if (!reasoningDiv) {
+            reasoningDiv = document.createElement('div');
+            reasoningDiv.className = 'chat-thinking';
+            reasoningDiv.textContent = data;
+            out.appendChild(reasoningDiv);
+          } else {
+            reasoningDiv.textContent += data;
+          }
+        } else if (eventType === 'content') {
+          if (!contentDiv) {
+            contentDiv = document.createElement('div');
+            contentDiv.className = 'chat-content';
+            out.appendChild(contentDiv);
+          }
+          contentBuffer += data;
+          contentDiv.innerHTML = marked.parse(contentBuffer);
+        } else if (eventType === 'error') {
+          out.innerHTML += '<div class="chat-error">\u26a0 ' + esc(data) + '</div>';
+        } else if (eventType === 'done') {
+          out.innerHTML += '<div class="chat-status" style="color:#484848;">\u2713 done</div>';
+        }
+        out.scrollTop = out.scrollHeight;
+      }
+    }
+  }).catch(err => {
+    out.innerHTML += '<div class="chat-error">\u26a0 ' + esc(err.message) + '</div>';
+  });
+};
+</script>
 </body>
 </html>
 """
