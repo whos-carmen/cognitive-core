@@ -363,7 +363,24 @@ class Agent:
                 else:
                     # Local-first: check local files before web search
                     if tool_name in ("web_search", "tavily_search"):
-                        # Ask agent model what tool to use before defaulting to web search
+                        # First: keyword-based routing for RAG questions (fast, no model needed)
+                        rag_keywords = ["rag", "knowledge base", "chroma", "retrieval", "ingest", "stored in", "what info", "entries", "currently"]
+                        meta_kw = ["what info", "stored in", "entries", "currently"]
+                        is_rag_question = any(kw in prompt.lower() for kw in rag_keywords)
+                        use_status = any(kw in prompt.lower() for kw in meta_kw)
+                        if is_rag_question:
+                            tool_for_rag = "rag_status" if use_status else "rag_query"
+                            rag_map = self.tool_mappings.get(tool_for_rag)
+                            if rag_map:
+                                rag_result = self._exec_builtin(tool_for_rag, {} if tool_for_rag == "rag_status" else {"query": prompt}, rag_map)
+                                if rag_result and "Error" not in rag_result and rag_result.strip():
+                                    if on_token:
+                                        on_token("reasoning", f"\n[queried RAG {tool_for_rag}]\n")
+                                        on_token("content", rag_result[:2000])
+                                    self._write_trace(prompt, tool_for_rag, rag_result)
+                                    self._write_log(TOOLS_LOG, {"timestamp": str(datetime.now()), "tool": tool_for_rag, "result_snippet": rag_result[:200]})
+                                    return rag_result
+                        # Second: ask agent model what tool to use
                         if self._agent_cfg.get("enabled"):
                             agent_advice = self._query_agent(f"The user asked: {prompt}\nWhich tool should be used? Options: rag_query (for project knowledge), web_search (for current events/web info), file_search (for finding files), shell_exec (for bash commands). Reply with just the tool name and parameters in XML format: <function name=\"tool\"><param name=\"param\">value</param></function>")
                             if agent_advice and "<function" in agent_advice:
@@ -397,20 +414,7 @@ class Agent:
                                             self._write_trace(prompt, f"tool_call:{new_name}", str(result)[:200])
                                             self._write_log(TOOLS_LOG, {"timestamp": str(datetime.now()), "tool": new_name, "parameters": new_params, "result_snippet": str(result)[:200]})
                                             return synthesis
-                        # If prompt is about RAG/knowledge base, query Chroma directly instead of local search
-                        rag_keywords = ["rag", "knowledge base", "chroma", "retrieval", "ingest", "stored in"]
-                        is_rag_question = any(kw in prompt.lower() for kw in rag_keywords)
-                        if is_rag_question:
-                            rag_map = self.tool_mappings.get("rag_query")
-                            if rag_map:
-                                rag_result = self._exec_builtin("rag_query", {"query": prompt}, rag_map)
-                                if rag_result and "Error" not in rag_result and rag_result.strip():
-                                    if on_token:
-                                        on_token("reasoning", "\n[queried RAG knowledge base]\n")
-                                        on_token("content", rag_result[:2000])
-                                    self._write_trace(prompt, "rag_query", rag_result)
-                                    self._write_log(TOOLS_LOG, {"timestamp": str(datetime.now()), "tool": "rag_query", "parameters": {"query": prompt}, "result_snippet": rag_result[:200]})
-                                    return rag_result
+
                         local_hit = self._quick_local_search(prompt)
                         if local_hit and "No files" not in local_hit:
                             if on_token:
