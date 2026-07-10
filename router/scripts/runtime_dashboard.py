@@ -779,7 +779,8 @@ sendChat = function() {
             out.appendChild(contentDiv);
           }
           contentBuffer += data;
-          contentDiv.innerHTML = marked.parse(contentBuffer);
+          const normalized = contentBuffer.replace(/\n{3,}/g, '\n\n');
+          contentDiv.innerHTML = marked.parse(normalized);
         } else if (eventType === 'error') {
           out.innerHTML += '<div class="chat-error">\u26a0 ' + esc(data) + '</div>';
         } else if (eventType === 'done') {
