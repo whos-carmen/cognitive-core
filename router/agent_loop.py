@@ -277,18 +277,16 @@ class Agent:
                 for chunk_text in [content[i:i+50] for i in range(0, len(content), 50)]:
                     on_token("content", chunk_text)
 
-            # If content has a substantive answer (not just tool calls), return it directly
-            import re as _re
-            clean_content = _re.sub(r'<function[^>]*>.*?</function>', '', content, flags=_re.DOTALL).strip()
-            clean_full = _re.sub(r'<function[^>]*>.*?</function>', '', full_text, flags=_re.DOTALL).strip()
-            if clean_content and len(clean_content) > 30:
-                if on_token:
-                    for chunk_text in [clean_content[i:i+50] for i in range(0, len(clean_content), 50)]:
-                        on_token("content", chunk_text)
-                self._write_trace(prompt, "answer_directly", clean_content, reasoning)
-                return clean_content
-
             if not calls:
+                # If content has a substantive answer (not just thinking), return it directly
+                import re as _re
+                clean_content = _re.sub(r'<function[^>]*>.*?</function>', '', content, flags=_re.DOTALL).strip()
+                if clean_content and len(clean_content) > 30 and not clean_content.lower().startswith(("the user", "i need", "let me", "looking", "hmm", "okay", "the question")):
+                    if on_token:
+                        for chunk_text in [clean_content[i:i+50] for i in range(0, len(clean_content), 50)]:
+                            on_token("content", chunk_text)
+                    self._write_trace(prompt, "answer_directly", clean_content, reasoning)
+                    return clean_content
                 # Check if the model refused or speculated (didn't use tools when it should)
                 refusal_keywords = [
                     "i don't have access", "i cannot", "i apologize",
