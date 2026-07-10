@@ -397,6 +397,20 @@ class Agent:
                                             self._write_trace(prompt, f"tool_call:{new_name}", str(result)[:200])
                                             self._write_log(TOOLS_LOG, {"timestamp": str(datetime.now()), "tool": new_name, "parameters": new_params, "result_snippet": str(result)[:200]})
                                             return synthesis
+                        # If prompt is about RAG/knowledge base, query Chroma directly instead of local search
+                        rag_keywords = ["rag", "knowledge base", "chroma", "retrieval", "ingest", "stored in"]
+                        is_rag_question = any(kw in prompt.lower() for kw in rag_keywords)
+                        if is_rag_question:
+                            rag_map = self.tool_mappings.get("rag_query")
+                            if rag_map:
+                                rag_result = self._exec_builtin("rag_query", {"query": prompt}, rag_map)
+                                if rag_result and "Error" not in rag_result and rag_result.strip():
+                                    if on_token:
+                                        on_token("reasoning", "\n[queried RAG knowledge base]\n")
+                                        on_token("content", rag_result[:2000])
+                                    self._write_trace(prompt, "rag_query", rag_result)
+                                    self._write_log(TOOLS_LOG, {"timestamp": str(datetime.now()), "tool": "rag_query", "parameters": {"query": prompt}, "result_snippet": rag_result[:200]})
+                                    return rag_result
                         local_hit = self._quick_local_search(prompt)
                         if local_hit and "No files" not in local_hit:
                             if on_token:
