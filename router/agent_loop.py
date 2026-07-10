@@ -259,7 +259,12 @@ class Agent:
 
                 self._write_trace(prompt, f"tool_call:{tool_name}", result[:200])
 
-                # Feed tool result back to model
+                # For web search tools: synthesize results with Granite instead of 1B router
+                if tool_name in ("web_search", "web_fetch", "tavily_search", "tavily_research"):
+                    synthesis = self._synthesize(prompt, result)
+                    return synthesis
+
+                # For other tools: feed result back to router model
                 messages.append({"role": "assistant", "content": content})
                 messages.append({
                     "role": "tool",
@@ -315,6 +320,24 @@ class Agent:
         except Exception as e:
             print(f"  RAG error: {e}")
             return None
+
+    def _synthesize(self, question: str, search_results: str) -> str:
+        """Use Granite 4.1-8B to synthesize clean answer from search results."""
+        try:
+            client = OpenAI(base_url=RAG_URL, api_key="not-needed")
+            response = client.chat.completions.create(
+                model="granite",
+                messages=[
+                    {"role": "system", "content": "You are a research assistant. Given web search results and a question, produce a concise, accurate answer. Cite specific numbers and facts. If the results don't contain the answer, say so."},
+                    {"role": "user", "content": f"Search results:\n{search_results[:3000]}\n\nQuestion: {question}"},
+                ],
+                max_tokens=500,
+            )
+            answer = response.choices[0].message.content or "(no response)"
+            self._write_trace(question, "answer_directly", answer)
+            return answer
+        except Exception as e:
+            return f"[Granite synthesis error: {e}]"
 
     def _write_trace(self, prompt, decision, content=None, reasoning=None):
         trace = {
