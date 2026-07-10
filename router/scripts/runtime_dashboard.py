@@ -500,7 +500,8 @@ a { color: #4af; text-decoration: none; }
 
 <!-- Live Chat -->
 <div class="chat-panel">
-  <div class="panel-title">💬 Live Chat — watch the model think in real-time</div>
+  <div class="panel-title">💬 Live Chat — session: <span id="sessionLabel">new</span>
+      <button class="btn-sml" onclick="newSession()" style="float:right;background:#0f3460;border:none;color:#c7c7c7;cursor:pointer;font-size:10px;padding:1px 6px;">+ New</button></div>
   <div class="chat-input-row">
     <input id="chatInput" type="text" placeholder="type a prompt here..." onkeydown="if(event.key==='Enter')sendChat()">
     <button class="btn" onclick="sendChat()">Send</button>
@@ -508,6 +509,15 @@ a { color: #4af; text-decoration: none; }
   </div>
   <div class="chat-output" id="chatOutput">
     <div class="chat-status">Type a prompt above to watch the model reason and call tools live.</div>
+  </div>
+</div>
+
+<!-- Session list -->
+<div class="ingest-panel" style="margin-bottom:6px;">
+  <div class="panel-title" onclick="this.nextElementSibling.classList.toggle('open')">\u2328 Sessions \u25bc</div>
+  <div class="ingest-body open" style="display:block;max-height:150px;overflow-y:auto;">
+    <select id="sessionList" style="width:100%;background:#0d0d1a;border:1px solid #0f3460;color:#c7c7c7;font-family:monospace;font-size:11px;padding:3px;" onchange="loadSession(this.value)"></select>
+    <div style="margin-top:4px;font-size:10px;color:#484848;">Select a session to reload it, or + New for a fresh conversation.</div>
   </div>
 </div>
 
@@ -570,8 +580,8 @@ function update() {
     document.getElementById('tracesFeed').innerHTML = renderTraces(d.traces);
     document.getElementById('kbCount').textContent = d.chroma_count >= 0 ? d.chroma_count : '?';
     document.getElementById('sTraces').textContent = d.trace_count;
-    document.getElementById('sRouter').textContent = d.router_tps || '—';
-    document.getElementById('sRag').textContent = d.rag_tps || '—';
+    document.getElementById('sRouterTps').textContent = d.router_tps || '—';
+    document.getElementById('sRagTps').textContent = d.rag_tps || '—';
     document.getElementById('sKb').textContent = d.chroma_count >= 0 ? d.chroma_count : '-';
   });
 
@@ -647,6 +657,12 @@ function sendChat() {
   });
 }
 let currentSessionId = null;
+
+function loadSession(sid) {
+  currentSessionId = sid;
+  document.getElementById('sessionLabel').textContent = sid.slice(0,24);
+  document.getElementById('chatOutput').innerHTML = '<div class="chat-status">Loaded session: ' + sid.slice(0,24) + '</div>';
+}
 
 function newSession() {
   currentSessionId = 'session-' + Date.now() + '-' + Math.random().toString(36).slice(2,6);
