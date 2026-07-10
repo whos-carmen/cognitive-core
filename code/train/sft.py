@@ -42,6 +42,11 @@ def main():
     ap.add_argument("--out", default=os.path.join(PROJ, "train", "outputs", "sft"))
     ap.add_argument("--train_file", default=os.path.join(PROJ, "data", "built", "train.jsonl"))  # override for SFT-v2 (e.g. retail-dropped mix)
     ap.add_argument("--neftune", type=float, default=0.0)  # NEFTune noise alpha (e.g. 5); 0 = off. Anti-overfit for multi-epoch runs.
+    ap.add_argument("--lr_scheduler", type=str, default="cosine")
+    ap.add_argument("--warmup_ratio", type=float, default=0.05)
+    ap.add_argument("--weight_decay", type=float, default=0.01)
+    ap.add_argument("--max_grad_norm", type=float, default=1.0)
+    ap.add_argument("--seed", type=int, default=42)
     args = ap.parse_args()
 
     import torch
@@ -138,15 +143,15 @@ def main():
         per_device_train_batch_size=args.bsz, gradient_accumulation_steps=args.accum,
         per_device_eval_batch_size=1, prediction_loss_only=True,  # bsz1 => no pad => is_causal O(L) path; loss only (no logits)
         num_train_epochs=args.epochs, max_steps=args.max_steps,
-        learning_rate=args.lr, lr_scheduler_type="cosine", warmup_ratio=0.03,
+        learning_rate=args.lr, lr_scheduler_type=args.lr_scheduler, warmup_ratio=args.warmup_ratio,
         optim="adamw_8bit", bf16=True, gradient_checkpointing=True,
         gradient_checkpointing_kwargs={"use_reentrant": False},
-        max_grad_norm=1.0, weight_decay=0.0, logging_steps=10, save_steps=100,
+        max_grad_norm=args.max_grad_norm, weight_decay=args.weight_decay, logging_steps=10, save_steps=100,
         save_total_limit=2, eval_strategy=("steps" if eval_ds is not None else "no"), eval_steps=200,
         dataloader_num_workers=0, dataloader_pin_memory=False,  # pinned host buffers were a leak source
         ignore_data_skip=True,  # on resume, don't re-iterate skipped batches (slow) — start fresh shuffle at resume step;
                                 # enables fast periodic resume-RESETS to clear the ~120MB/step cuDNN/allocator host leak
-        report_to="none", seed=3407, logging_dir=os.path.join(args.out, "tb"),
+        report_to="none", seed=args.seed, logging_dir=os.path.join(args.out, "tb"),
         neftune_noise_alpha=(args.neftune if args.neftune and args.neftune > 0 else None),  # noisy embeddings -> regularize / anti-overfit over the extra epochs
     )
     metrics_path = os.path.join(PROJ, "logs", "sft_metrics.jsonl")

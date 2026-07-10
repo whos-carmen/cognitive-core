@@ -50,6 +50,7 @@ get_preset() {
     case "$1" in
         *T4*)                 echo "t4" ;;
         *A10G*)               echo "a10g" ;;
+        *L40S*)               echo "a100-40" ;;
         *L4*)                 echo "l4" ;;
         *A100*40*)            echo "a100-40" ;;
         *A100*80*|*A100-SXM*) echo "a100-80" ;;
