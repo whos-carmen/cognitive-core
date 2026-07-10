@@ -1,7 +1,7 @@
 {
   "_comment": "MCP server configuration for the Cognitive Core agent loop.",
   "_comment2": "Add any MCP server here. The agent loop connects to all at startup.",
-  "_comment3": "Tool mappings map model tool names → MCP server tools.",
+  "_comment3": "Tool mappings map model tool names → MCP server or built-in tools.",
 
   "mcp_servers": {
     "tavily": {
@@ -53,6 +53,24 @@
       },
       "default_params": {
         "model": "auto"
+      }
+    },
+    "shell_exec": {
+      "description": "Run a shell command on the local machine (e.g. find, grep, ls)",
+      "type": "builtin",
+      "param_mapping": {
+        "command": "command"
+      }
+    },
+    "file_search": {
+      "description": "Search for files on the local machine by name or content",
+      "type": "builtin",
+      "param_mapping": {
+        "pattern": "pattern",
+        "path": "path"
+      },
+      "default_params": {
+        "path": "/home/pixie/cognitive-core"
       }
     }
   }

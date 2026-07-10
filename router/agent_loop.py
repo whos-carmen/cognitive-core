@@ -257,9 +257,19 @@ class Agent:
                             on_token("content", rag_check)
                         self._write_trace(prompt, "needs_knowledge", rag_check)
                         return rag_check
-                    # RAG didn't have it → fall through to web search
+                    # RAG didn't have it → try local file search
                     if on_token:
-                        on_token("reasoning", "\n[knowledge base empty, searching web...]\n")
+                        on_token("reasoning", "\n[knowledge base empty, checking local files...]\n")
+                    local_result = self._quick_local_search(prompt)
+                    if local_result and "No files" not in local_result:
+                        if on_token:
+                            on_token("reasoning", "\n[found matching local files]\n")
+                            on_token("content", local_result[:2000])
+                        self._write_trace(prompt, "local_file_search", local_result)
+                        return local_result
+                    # Nothing local → fall through to web search
+                    if on_token:
+                        on_token("reasoning", "\n[no local matches, searching web...]\n")
                     messages.append({
                         "role": "user",
                         "content": f"Please use the web_search tool to find information about this question. Search the web for: {prompt}"
@@ -276,22 +286,22 @@ class Agent:
                 mapping = self.tool_mappings.get(tool_name)
                 if not mapping:
                     result = f"Unknown tool: {tool_name}"
+                elif mapping.get("type") == "builtin":
+                    # Built-in tool: execute locally
+                    result = self._exec_builtin(tool_name, tool_params, mapping)
                 else:
-                    # Map params from model format to MCP format
+                    # MCP tool: execute via MCP server
                     mcp_params = {}
                     param_map = mapping.get("param_mapping", {})
                     for model_key, mcp_key in param_map.items():
                         if model_key in tool_params:
                             val = tool_params[model_key]
-                            # Convert string "true"/"false" to bool if needed
                             if val in ("true", "false"):
                                 val = val == "true"
                             mcp_params[mcp_key] = val
-                    # Add default params
                     for k, v in mapping.get("default_params", {}).items():
                         if k not in mcp_params:
                             mcp_params[k] = v
-
                     result = await self.mcp.call_tool(
                         mapping["mcp_server"],
                         mapping["mcp_tool"],
@@ -315,6 +325,76 @@ class Agent:
 
         # Max turns reached — return last response
         return "Max tool call turns reached."
+
+    def _quick_local_search(self, query: str) -> str | None:
+        """Quick search of project files for keywords from the query."""
+        import subprocess, re, os
+        project = "/home/pixie/cognitive-core"
+        # Extract meaningful keywords (skip common words)
+        keywords = [w.lower() for w in re.findall(r'\b[a-zA-Z]{3,}\b', query)
+                   if w.lower() not in ("the", "and", "for", "are", "was", "has", "had", "but", "not", "what", "how", "why", "when", "where", "that", "this", "with", "from", "have", "does", "its", "about", "search", "file", "files", "tool", "tools", "find", "local", "code", "project")]
+        if not keywords:
+            return None
+        # Use first 2 meaningful keywords
+        search = "|".join(keywords[:2])
+        try:
+            result = subprocess.check_output(
+                f'grep -rli "{search}" "{project}" --include="*.py" --include="*.md" --include="*.txt" --include="*.json" --include="*.yaml" --include="*.yml" 2>/dev/null | head -15',
+                shell=True, text=True, timeout=10,
+            )
+            if result.strip():
+                files = [os.path.relpath(f, project) for f in result.strip().split('\n')]
+                return f"Found relevant files in project:\n" + "\n".join(f"  - {f}" for f in files[:10])
+        except Exception:
+            pass
+        return None
+
+    def _exec_builtin(self, name, params, mapping):
+        """Execute a built-in tool (shell command, file search, etc.)."""
+        import subprocess
+        param_map = mapping.get("param_mapping", {})
+
+        if name == "shell_exec":
+            cmd = params.get(param_map.get("command", "command"), "")
+            if not cmd:
+                return "Error: no command provided"
+            try:
+                result = subprocess.check_output(cmd, shell=True, text=True, stderr=subprocess.STDOUT, timeout=30)
+                return result[:3000] or "(empty output)"
+            except subprocess.CalledProcessError as e:
+                return f"Command failed (exit {e.returncode}):\n{e.output[:2000]}"
+            except subprocess.TimeoutExpired:
+                return "Command timed out after 30s"
+            except Exception as e:
+                return f"Error: {e}"
+
+        if name == "file_search":
+            pattern = params.get(param_map.get("pattern", "pattern"), "")
+            path = params.get(param_map.get("path", "path"), mapping.get("default_params", {}).get("path", "."))
+            if not pattern:
+                return "Error: no search pattern provided"
+            try:
+                # Try find by name first
+                result = subprocess.check_output(
+                    f'find "{path}" -maxdepth 4 -type f -name "*{pattern}*" 2>/dev/null | head -30',
+                    shell=True, text=True, timeout=15,
+                )
+                if result.strip():
+                    return f"Files matching '{pattern}' in {path}:\n{result[:3000]}"
+                # Fall back to grep for content
+                result = subprocess.check_output(
+                    f'grep -rl "{pattern}" "{path}" --include="*.py" --include="*.md" --include="*.txt" --include="*.json" --include="*.js" --include="*.ts" --include="*.go" --include="*.rs" 2>/dev/null | head -20',
+                    shell=True, text=True, timeout=15,
+                )
+                if result.strip():
+                    return f"Files containing '{pattern}' in {path}:\n{result[:3000]}"
+                return f"No files matching '{pattern}' found in {path}"
+            except subprocess.TimeoutExpired:
+                return f"Search timed out"
+            except Exception as e:
+                return f"Error: {e}"
+
+        return f"Unknown builtin tool: {name}"
 
     def _get_reranker(self):
         """Lazy-load the LlamaNemotron reranker on first use."""
