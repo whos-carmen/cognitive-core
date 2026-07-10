@@ -122,6 +122,11 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json({"status": "ok"})
         elif path == "/api/vram":
             self.send_json({"vram": rocm_vram()})
+        elif path == "/api/sessions":
+            import sys as _sys
+            _sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            from agent_loop import Agent
+            self.send_json({"sessions": Agent.list_sessions()})
         else:
             self.send_html()
 
@@ -585,7 +590,7 @@ function sendChat() {
   fetch('/api/chat', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({prompt})
+    body: JSON.stringify({prompt, session_id: currentSessionId})
   }).then(async response => {
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
@@ -641,8 +646,35 @@ function sendChat() {
     out.innerHTML += '<div class="chat-error">\u26a0 ' + esc(err.message) + '</div>';
   });
 }
+let currentSessionId = null;
+
+function newSession() {
+  currentSessionId = 'session-' + Date.now() + '-' + Math.random().toString(36).slice(2,6);
+  document.getElementById('sessionLabel').textContent = currentSessionId.slice(0,24);
+  document.getElementById('chatOutput').innerHTML = '<div class="chat-status">New session started.</div>';
+  // Refresh session list
+  fetchSessions();
+}
+
+function fetchSessions() {
+  fetch('/api/sessions').then(r => r.json()).then(d => {
+    let sel = document.getElementById('sessionList');
+    if (!sel) return;
+    sel.innerHTML = '';
+    (d.sessions || []).forEach(s => {
+      let opt = document.createElement('option');
+      opt.value = s.id;
+      opt.textContent = s.id.slice(0,20) + ' (' + s.messages + ' msgs)';
+      sel.appendChild(opt);
+    });
+  }).catch(() => {});
+}
+
+newSession(); // Start with a fresh session
+
 setInterval(update, 3000);
 update();
+setInterval(fetchSessions, 5000);
 </script>
 </body>
 </html>

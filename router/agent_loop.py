@@ -27,6 +27,7 @@ CHROMA_PATH = os.path.join(os.path.dirname(__file__), "chroma_db")
 CHAT_LOG = "/var/log/cognitive-core/chat.jsonl"
 TOOLS_LOG = "/var/log/cognitive-core/tools.jsonl"
 RAG_LOG_STRUCTURED = "/var/log/cognitive-core/rag.jsonl"
+SESSIONS_DIR = "/var/log/cognitive-core/sessions"
 
 # Suppress torchao noise
 os.environ["TORCHCODEC_DISABLE"] = "1"
@@ -190,7 +191,7 @@ class Agent:
             self.run(prompt, system, on_token=on_token)
         )
 
-    async def run(self, prompt: str, system_prompt: str = None, max_turns: int = 5, on_token=None) -> str:
+    async def run(self, prompt: str, system_prompt: str = None, max_turns: int = 5, on_token=None, session_id: str = None) -> str:
         """Run one prompt through the agent loop.
         
         If on_token is provided, it's called with (event_type, text) for streaming:
@@ -210,8 +211,19 @@ class Agent:
 
         messages = [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": prompt},
         ]
+        # Load session history
+        session_history = []
+        if session_id:
+            session_path = os.path.join(SESSIONS_DIR, f"{session_id}.json")
+            if os.path.exists(session_path):
+                try:
+                    with open(session_path) as _f:
+                        session_history = json.load(_f)
+                        messages.extend(session_history)
+                except Exception:
+                    session_history = []
+        messages.append({"role": "user", "content": prompt})
 
         for turn in range(max_turns):
             # ── Get model response (streaming) ──
@@ -268,7 +280,8 @@ class Agent:
                         "question": prompt,
                         "answer": (rag_answer or "")[:500],
                     })
-                    if rag_answer and "not have enough information" not in rag_answer.lower():
+                    if rag_answer and "not have enough information" not in rag_answer.lower() and "don't have enough information" not in rag_answer.lower():
+                        self._save_session(session_id, session_history, prompt, rag_answer, [])
                         self._write_trace(prompt, "needs_knowledge", rag_answer)
                         return rag_answer
 
@@ -289,10 +302,11 @@ class Agent:
                         "question": prompt,
                         "answer": (rag_check or "")[:500],
                     })
-                    if rag_check and "not have enough information" not in rag_check.lower()[:50]:
+                    if rag_check and "not have enough information" not in rag_check.lower()[:80] and "don't have enough information" not in rag_check.lower()[:80]:
                         if on_token:
                             on_token("reasoning", "\n[verified against knowledge base]\n")
                             on_token("content", rag_check)
+                        self._save_session(session_id, session_history, prompt, rag_check, [])
                         self._write_trace(prompt, "needs_knowledge", rag_check)
                         return rag_check
                     # RAG didn't have it → try local file search
@@ -376,6 +390,20 @@ class Agent:
                     "name": tool_name,
                 })
 
+        # Save session
+        if session_id:
+            try:
+                os.makedirs(SESSIONS_DIR, exist_ok=True)
+                session_path = os.path.join(SESSIONS_DIR, f"{session_id}.json")
+                session_history.append({"role": "assistant", "content": content if content.strip() else reasoning.strip() or "(no response)"})
+                # Also add any tool calls/results from the conversation
+                for call in calls:
+                    session_history.append({"role": "assistant", "content": content})
+                    session_history.append({"role": "tool", "content": str(result)[:2000], "name": call["name"]})
+                with open(session_path, "w") as _f:
+                    json.dump(session_history, _f, indent=2)
+            except Exception:
+                pass
         # Max turns reached — return last response
         return "Max tool call turns reached."
 
@@ -556,6 +584,41 @@ class Agent:
                 f.write(json.dumps(data) + "\n")
         except (IOError, PermissionError):
             pass
+
+    def _save_session(self, session_id, history, user_msg, assistant_msg, tool_calls):
+        """Save conversation turn to session file."""
+        if not session_id:
+            return
+        try:
+            os.makedirs(SESSIONS_DIR, exist_ok=True)
+            session_path = os.path.join(SESSIONS_DIR, f"{session_id}.json")
+            history.append({"role": "user", "content": user_msg})
+            history.append({"role": "assistant", "content": str(assistant_msg)[:2000]})
+            for tc in tool_calls:
+                history.append({"role": "tool", "content": str(tc.get("result",""))[:2000], "name": tc.get("name","?")})
+            with open(session_path, "w") as f:
+                json.dump(history, f, indent=2)
+        except Exception:
+            pass
+
+    @staticmethod
+    def list_sessions():
+        """Return list of available sessions with timestamps."""
+        sessions = []
+        if not os.path.isdir(SESSIONS_DIR):
+            return sessions
+        for fname in os.listdir(SESSIONS_DIR):
+            if fname.endswith(".json"):
+                sid = fname[:-5]
+                path = os.path.join(SESSIONS_DIR, fname)
+                try:
+                    mtime = os.path.getmtime(path)
+                    with open(path) as f:
+                        msgs = json.load(f)
+                    sessions.append({"id": sid, "messages": len(msgs), "updated": datetime.fromtimestamp(mtime).isoformat(), "preview": (msgs[0]["content"][:100] if msgs else "")})
+                except Exception:
+                    sessions.append({"id": sid, "messages": 0})
+        return sorted(sessions, key=lambda s: s.get("updated",""), reverse=True)
 
     def _write_trace(self, prompt, decision, content=None, reasoning=None):
         latency = 0
