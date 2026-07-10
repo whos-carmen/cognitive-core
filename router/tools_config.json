@@ -1,0 +1,59 @@
+{
+  "_comment": "MCP server configuration for the Cognitive Core agent loop.",
+  "_comment2": "Add any MCP server here. The agent loop connects to all at startup.",
+  "_comment3": "Tool mappings map model tool names → MCP server tools.",
+
+  "mcp_servers": {
+    "tavily": {
+      "description": "Tavily web search MCP server",
+      "command": "npx",
+      "args": ["-y", "tavily-mcp"],
+      "env": {
+        "TAVILY_API_KEY": "${TAVILY_API_KEY}"
+      }
+    }
+  },
+
+  "tool_mappings": {
+    "web_search": {
+      "description": "Search the web for current information",
+      "mcp_server": "tavily",
+      "mcp_tool": "tavily_search",
+      "param_mapping": {
+        "query": "query",
+        "max_results": "max_results",
+        "search_depth": "search_depth",
+        "time_range": "time_range",
+        "include_raw_content": "include_raw_content"
+      },
+      "default_params": {
+        "max_results": 5,
+        "search_depth": "basic"
+      }
+    },
+    "web_fetch": {
+      "description": "Extract content from a URL",
+      "mcp_server": "tavily",
+      "mcp_tool": "tavily_extract",
+      "param_mapping": {
+        "url": "urls",
+        "format": "format"
+      },
+      "default_params": {
+        "format": "markdown"
+      }
+    },
+    "tavily_research": {
+      "description": "Perform in-depth research on a topic",
+      "mcp_server": "tavily",
+      "mcp_tool": "tavily_research",
+      "param_mapping": {
+        "input": "input",
+        "model": "model"
+      },
+      "default_params": {
+        "model": "auto"
+      }
+    }
+  }
+}

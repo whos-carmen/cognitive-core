@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Cognitive Core — Runtime Observability Dashboard + Data Ingestion
+"""Cognitive Core — Runtime Dashboard + Live Chat
 
-Shows the router's decision chain in real-time, and allows uploading files
-to the Chroma knowledge base via the web UI.
+Shows router log, RAG log, traces, and a live chat panel to watch
+the model think, reason, and call tools in real-time.
 
 Usage:
     python scripts/runtime_dashboard.py --port 8766
@@ -11,41 +11,34 @@ Usage:
 import argparse
 import json
 import os
-import re
-import time
-import io
-import cgi
+import subprocess
 import uuid
-import traceback
 from datetime import datetime
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse
 
+# ── Paths ──
+ROUTER_LOG = "/tmp/cognitive-core.log"
+RAG_LOG = "/tmp/cognitive-core-rag.log"
 TRACES_PATH = "/var/log/cognitive-core/traces.jsonl"
 CHROMA_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "chroma_db")
-MAX_TRACES = 500
-
-# Lazy imports for ingestion (only loaded when a file is uploaded)
-_embed_model = None
-_chroma_collection = None
-
-def get_embed_model():
-    global _embed_model
-    if _embed_model is None:
-        from sentence_transformers import SentenceTransformer
-        _embed_model = SentenceTransformer("ibm-granite/granite-embedding-english-r2")
-    return _embed_model
-
-def get_chroma_collection(path):
-    global _chroma_collection
-    if _chroma_collection is None:
-        import chromadb
-        db = chromadb.PersistentClient(path=path)
-        _chroma_collection = db.get_or_create_collection("knowledge")
-    return _chroma_collection
+ROUTER_URL = "http://localhost:8081/v1"
+RAG_URL = "http://localhost:8082/v1"
+MAX_TRACES = 200
 
 
-def read_traces(path: str, last_n: int = 200) -> list[dict]:
+def tail(path: str, n: int = 40) -> str:
+    if not os.path.exists(path):
+        return "[waiting for log file...]"
+    try:
+        with open(path) as f:
+            lines = f.readlines()
+        return "".join(lines[-n:])
+    except (IOError, PermissionError):
+        return "[cannot read log]"
+
+
+def read_traces(path: str, last_n: int = 50) -> list[dict]:
     if not os.path.exists(path):
         return []
     traces = []
@@ -63,398 +56,445 @@ def read_traces(path: str, last_n: int = 200) -> list[dict]:
     return traces[-last_n:]
 
 
-def tail_file(path: str, n: int = 20) -> str:
-    if not os.path.exists(path):
-        return ""
+def rocm_vram() -> str:
     try:
-        with open(path) as f:
-            lines = f.readlines()
-        return "".join(lines[-n:])
-    except (IOError, PermissionError):
-        return ""
-
-
-def ingest_text(text: str, source: str, chroma_path: str, metadata: dict = None) -> dict:
-    """Chunk, embed with Granite, and store in Chroma."""
-    model = get_embed_model()
-    collection = get_chroma_collection(chroma_path)
-
-    # Simple chunking: 512-char chunks with 256-char overlap
-    chunk_size = 512
-    overlap = 256
-    chunks = []
-    ids = []
-
-    for i in range(0, max(len(text), 1), chunk_size - overlap):
-        chunk = text[i:i + chunk_size]
-        if len(chunk.strip()) < 20:
-            continue
-        chunk_id = f"{source}-{uuid.uuid4().hex[:8]}-{i}"
-        chunks.append(chunk)
-        ids.append(chunk_id)
-
-    if not chunks:
-        return {"status": "error", "message": "Text too short after chunking"}
-
-    # Embed in batches
-    batch_size = 64
-    total_chunks = len(chunks)
-    metadatas = [{"source": source, **(metadata or {})} for _ in chunks]
-
-    for batch_start in range(0, total_chunks, batch_size):
-        batch_end = min(batch_start + batch_size, total_chunks)
-        batch_texts = chunks[batch_start:batch_end]
-        batch_ids = ids[batch_start:batch_end]
-        batch_meta = metadatas[batch_start:batch_end]
-
-        embeddings = model.encode(batch_texts, normalize_embeddings=True).tolist()
-        collection.add(
-            documents=batch_texts,
-            embeddings=embeddings,
-            metadatas=batch_meta,
-            ids=batch_ids
+        out = subprocess.check_output(
+            ["rocm-smi", "--showmeminfo", "vram"], text=True, stderr=subprocess.DEVNULL
         )
+        for line in out.splitlines():
+            if "VRAM Total Memory" in line and "GPU[0]" in line:
+                total = int(line.split(":")[-1].strip()) // (1024**3)
+            if "VRAM Total Used Memory" in line:
+                used = int(line.split(":")[-1].strip()) // (1024**3)
+        return f"{used}G / {total}G"
+    except Exception:
+        return "N/A"
 
-    return {
-        "status": "ok",
-        "chunks": total_chunks,
-        "source": source,
-        "total_chars": len(text),
-    }
+
+def chroma_count() -> int:
+    try:
+        import chromadb
+        db = chromadb.PersistentClient(path=CHROMA_PATH)
+        return db.get_or_create_collection("knowledge").count()
+    except Exception:
+        return -1
 
 
-def _handler_class(traces_path: str, chroma_path: str):
-    from http.server import BaseHTTPRequestHandler
-    from urllib.parse import urlparse
+# ═══════════════════════════════════════════════════════════════
+#  HTTP Handler
+# ═══════════════════════════════════════════════════════════════
 
-    class Handler(BaseHTTPRequestHandler):
-        def do_GET(self):
-            parsed = urlparse(self.path)
-            path = parsed.path
+class Handler(BaseHTTPRequestHandler):
+    def log_message(self, fmt, *args):
+        pass
 
-            if path == "/api/traces":
-                traces = read_traces(traces_path)
-                self.send_json({
-                    "traces": traces,
-                    "count": len(traces),
-                    "now": datetime.now().isoformat(),
-                })
-            elif path == "/api/stats":
-                traces = read_traces(traces_path)
-                stats = compute_stats(traces)
-                self.send_json(stats)
-            elif path == "/api/ingest/stats":
-                collection = get_chroma_collection(chroma_path)
-                count = collection.count()
-                self.send_json({"count": count})
-            else:
-                self.send_html()
+    def do_GET(self):
+        parsed = urlparse(self.path)
+        path = parsed.path
+        if path == "/api/data":
+            self.send_json(self._collect_data())
+        elif path == "/health":
+            self.send_json({"status": "ok"})
+        elif path == "/api/vram":
+            self.send_json({"vram": rocm_vram()})
+        else:
+            self.send_html()
 
-        def do_POST(self):
-            parsed = urlparse(self.path)
-            path = parsed.path
+    def do_POST(self):
+        parsed = urlparse(self.path)
+        path = parsed.path
+        if path == "/api/ingest":
+            return self._ingest_handler()
+        elif path == "/api/chat":
+            return self._chat_handler()
+        self.send_json({"status": "error", "message": "not found"})
 
-            if path == "/api/ingest":
-                self._handle_upload()
+    def _collect_data(self):
+        return {
+            "router_log": tail(ROUTER_LOG, 40),
+            "rag_log": tail(RAG_LOG, 40),
+            "traces": read_traces(TRACES_PATH)[::-1],
+            "trace_count": sum(1 for _ in open(TRACES_PATH) if _.strip()) if os.path.exists(TRACES_PATH) else 0,
+            "chroma_count": chroma_count(),
+            "now": datetime.now().isoformat(),
+        }
 
-        def _handle_upload(self):
-            content_type = self.headers.get("Content-Type", "")
-            ct = content_type.split(";")[0]
+    # ── Chat SSE endpoint (agent loop with MCP tools) ──
+    def _chat_handler(self):
+        import asyncio
+        length = int(self.headers.get("Content-Length", 0))
+        body = json.loads(self.rfile.read(length))
+        prompt = body.get("prompt", "")
+        system = body.get("system", "")
 
-            try:
-                if "multipart/form-data" in content_type:
-                    form = cgi.FieldStorage(
-                        fp=self.rfile,
-                        headers=self.headers,
-                        environ={
-                            "REQUEST_METHOD": "POST",
-                            "CONTENT_TYPE": content_type,
-                        }
-                    )
-                    file_item = form.getfirst("file")
-                    source_name = form.getfirst("source") or file_item.filename or "upload"
+        if not prompt.strip():
+            self.send_json({"error": "empty prompt"})
+            return
 
-                    if file_item and hasattr(file_item, "file"):
-                        text = file_item.file.read().decode("utf-8", errors="replace")
-                    else:
-                        self.send_json({"status": "error", "message": "No file uploaded"})
-                        return
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Connection", "keep-alive")
+        self.end_headers()
 
-                elif "application/json" in content_type:
-                    length = int(self.headers.get("Content-Length", 0))
-                    body = self.rfile.read(length).decode("utf-8")
-                    data = json.loads(body)
-                    text = data.get("text", "")
-                    source_name = data.get("source", "paste")
+        try:
+            # Run the agent loop synchronously
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            import sys as _sys
+            _sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            from agent_loop import Agent
+            agent = Agent()
 
-                else:
-                    self.send_json({"status": "error", "message": f"Unsupported content type: {ct}"})
-                    return
+            async def run_agent():
+                await agent.start()
+                try:
+                    result = await agent.run(prompt, system if system else None)
+                finally:
+                    await agent.stop()
+                return result
 
-                if len(text.strip()) < 10:
-                    self.send_json({"status": "error", "message": "Text too short"})
-                    return
+            result = loop.run_until_complete(run_agent())
+            loop.close()
+            self._sse("content", result)
+            self._sse("done", "")
+        except Exception as e:
+            self._sse("error", str(e))
+            self._sse("done", "")
 
-                result = ingest_text(text, source_name, chroma_path)
-                self.send_json(result)
-
-            except Exception as e:
-                self.send_json({"status": "error", "message": str(e)})
-
-        def send_json(self, data):
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Access-Control-Allow-Origin", "*")
-            self.send_header("Cache-Control", "no-cache")
-            self.end_headers()
-            self.wfile.write(json.dumps(data).encode())
-
-        def send_html(self):
-            self.send_response(200)
-            self.send_header("Content-Type", "text/html; charset=utf-8")
-            self.send_header("Cache-Control", "no-cache")
-            self.end_headers()
-            self.wfile.write(HTML.encode())
-
-        def log_message(self, fmt, *args):
+    def _sse(self, event: str, data: str):
+        try:
+            self.wfile.write(f"event: {event}\ndata: {json.dumps(data)}\n\n".encode())
+            self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError):
             pass
 
-    return Handler
+    def _write_trace(self, prompt, content, reasoning, t_start=None):
+        try:
+            import sys as _sys
+            _sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            from eval.tool_parser import ToolCallParser
+            parser = ToolCallParser()
+            calls = parser.parse(content + reasoning)
+        except Exception:
+            calls = []
+
+        decision = "answer_directly"
+        tool_info = None
+        if calls:
+            decision = "tool_call"
+            tool_info = {"name": calls[0]["name"], "parameters": calls[0]["parameters"]}
+        elif "search" in reasoning.lower() or "look up" in reasoning.lower() or "retriev" in reasoning.lower() or "not know" in reasoning.lower():
+            decision = "needs_knowledge"
+
+        latency = 0
+        if t_start:
+            latency = round((datetime.now() - t_start).total_seconds() * 1000)
+
+        trace = {
+            "timestamp": datetime.now().isoformat(),
+            "decision": decision,
+            "user": prompt[:120],
+            "latency_ms": latency,
+            "tool": tool_info,
+            "reasoning_snippet": reasoning[:200] if reasoning else None,
+        }
+        try:
+            with open(TRACES_PATH, "a") as f:
+                f.write(json.dumps(trace) + "\n")
+        except (IOError, PermissionError):
+            pass
+
+    def send_json(self, data):
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Cache-Control", "no-cache")
+        self.end_headers()
+        self.wfile.write(json.dumps(data).encode())
+
+    def send_html(self):
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache")
+        self.end_headers()
+        self.wfile.write(HTML.encode())
+
+    # ── Ingestion handler (same as before) ──
+    def _ingest_handler(self):
+        length = int(self.headers.get("Content-Length", 0))
+        body = json.loads(self.rfile.read(length))
+        text = body.get("text", "")
+        source = body.get("source", "paste")
+
+        if len(text.strip()) < 10:
+            self.send_json({"status": "error", "message": "Text too short"})
+            return
+
+        try:
+            from sentence_transformers import SentenceTransformer
+            import chromadb
+            model = SentenceTransformer("ibm-granite/granite-embedding-english-r2")
+            db = chromadb.PersistentClient(path=CHROMA_PATH)
+            collection = db.get_or_create_collection("knowledge")
+
+            chunk_size, overlap = 512, 256
+            chunks = []
+            for i in range(0, max(len(text), 1), chunk_size - overlap):
+                chunk = text[i:i + chunk_size]
+                if len(chunk.strip()) >= 20:
+                    chunks.append(chunk)
+
+            if not chunks:
+                self.send_json({"status": "error", "message": "Text too short after chunking"})
+                return
+
+            ids = [f"{source}-{uuid.uuid4().hex[:8]}-{j}" for j in range(len(chunks))]
+            metadatas = [{"source": source} for _ in chunks]
+
+            for bs in range(0, len(chunks), 64):
+                be = min(bs + 64, len(chunks))
+                embs = model.encode(chunks[bs:be], normalize_embeddings=True).tolist()
+                collection.add(documents=chunks[bs:be], embeddings=embs, metadatas=metadatas[bs:be], ids=ids[bs:be])
+
+            self.send_json({"status": "ok", "chunks": len(chunks), "source": source, "total_chars": len(text)})
+        except Exception as e:
+            self.send_json({"status": "error", "message": str(e)})
 
 
-def compute_stats(traces: list[dict]) -> dict:
-    total = len(traces)
-    if total == 0:
-        return {"total": 0, "by_decision": {}, "avg_latency_ms": 0, "rag_count": 0, "tool_count": 0, "memory_count": 0}
-
-    decisions = {}
-    rag_count = 0
-    tool_count = 0
-    memory_count = 0
-    latencies = []
-
-    for t in traces:
-        dec = t.get("decision", "unknown")
-        decisions[dec] = decisions.get(dec, 0) + 1
-        if t.get("rag"): rag_count += 1
-        if t.get("tool"): tool_count += 1
-        if t.get("memory"): memory_count += 1
-        lat = t.get("latency_ms")
-        if lat is not None:
-            latencies.append(lat)
-
-    return {
-        "total": total,
-        "by_decision": decisions,
-        "avg_latency_ms": round(sum(latencies) / len(latencies), 1) if latencies else 0,
-        "rag_count": rag_count,
-        "tool_count": tool_count,
-        "memory_count": memory_count,
-    }
-
+# ═══════════════════════════════════════════════════════════════
+#  HTML
+# ═══════════════════════════════════════════════════════════════
 
 HTML = r"""<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Cognitive Core — Runtime Dashboard</title>
+<title>Cognitive Core — Runtime</title>
 <style>
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body {
-    font-family: -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
-    background: #0d1117; color: #e1e4eb; line-height: 1.5;
-    padding: 1rem; max-width: 1200px; margin: 0 auto;
-  }
-  h1 { font-size: 1.2rem; margin-bottom: .25rem; display: flex; align-items: center; gap: .5rem; }
-  .subtitle { color: #8b949e; font-size: .8rem; margin-bottom: 1rem; }
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: "Consolas", "Monaco", "Liberation Mono", monospace;
+  background: #1a1a2e; color: #c7c7c7; font-size: 13px;
+  padding: 8px; min-height: 100vh;
+}
+a { color: #4af; text-decoration: none; }
 
-  /* Tabs */
-  .tabs { display: flex; gap: .25rem; margin-bottom: 1rem; }
-  .tab {
-    padding: .4rem 1rem; border-radius: 6px 6px 0 0;
-    cursor: pointer; font-size: .85rem; border: 1px solid #21262d; border-bottom: none;
-    background: #161b22; color: #8b949e;
-  }
-  .tab.active { background: #0d1117; color: #c9d1d9; border-bottom: 1px solid #0d1117; margin-bottom: -1px; }
-  .tab-pane { display: none; }
-  .tab-pane.active { display: block; }
+/* Header */
+.header {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 4px 8px; background: #16213e; border: 1px solid #0f3460;
+  margin-bottom: 6px;
+}
+.header h1 { font-size: 14px; color: #e94560; font-weight: normal; }
+.header .sub { color: #6a6a8a; font-size: 11px; }
 
-  /* Stats bar */
-  .stats-bar {
-    display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-    gap: .5rem; margin-bottom: 1rem;
-  }
-  .stat-card {
-    background: #161b22; border: 1px solid #21262d; border-radius: 6px;
-    padding: .6rem 1rem; text-align: center;
-  }
-  .stat-card .number { font-size: 1.3rem; font-weight: 600; color: #58a6ff; font-family: monospace; }
-  .stat-card .label { font-size: .7rem; color: #8b949e; text-transform: uppercase; letter-spacing: .3px; }
+/* Stats bar */
+.stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
+  gap: 3px; margin-bottom: 6px;
+}
+.stat {
+  background: #16213e; border: 1px solid #0f3460;
+  padding: 3px 6px; text-align: center;
+}
+.stat .num { color: #4af; font-size: 14px; }
+.stat .lbl { color: #6a6a8a; font-size: 10px; text-transform: uppercase; }
 
-  /* Trace feed */
-  .trace-feed { display: flex; flex-direction: column; gap: .5rem; }
-  .trace {
-    background: #161b22; border: 1px solid #21262d; border-radius: 6px;
-    padding: .75rem 1rem; font-size: .85rem;
-  }
-  .trace-header {
-    display: flex; justify-content: space-between; align-items: center;
-    margin-bottom: .4rem; gap: .5rem;
-  }
-  .trace-time { color: #484f58; font-family: monospace; font-size: .75rem; white-space: nowrap; }
-  .trace-user { color: #c9d1d9; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .trace-decision {
-    display: inline-block; padding: 2px 8px; border-radius: 10px;
-    font-size: .7rem; font-weight: 600; white-space: nowrap;
-  }
-  .decision-answer_directly { background: #1a4731; color: #7ee787; }
-  .decision-tool_call { background: #1a3a5c; color: #79c0ff; }
-  .decision-needs_knowledge { background: #3b2e00; color: #d29922; }
-  .decision-needs_rag { background: #3b2e00; color: #d29922; }
-  .decision-memory_recall { background: #2a1a5c; color: #a379ff; }
-  .decision-unknown { background: #21262d; color: #8b949e; }
+/* Main grid */
+.main-grid {
+  display: grid; grid-template-columns: 1fr 1fr;
+  gap: 4px; margin-bottom: 6px;
+}
 
-  .trace-body { color: #8b949e; font-size: .8rem; line-height: 1.4; }
-  .trace-body .rag-block, .trace-body .tool-block, .trace-body .memory-block {
-    margin-top: .3rem; padding: .4rem .6rem; background: #0d1117;
-    border-radius: 4px; font-family: monospace; font-size: .75rem;
-    overflow-x: auto; white-space: pre-wrap; word-break: break-word;
-  }
-  .trace-body .rag-block { border-left: 2px solid #d29922; }
-  .trace-body .tool-block { border-left: 2px solid #79c0ff; }
-  .trace-body .memory-block { border-left: 2px solid #a379ff; }
+/* Log panels */
+.log-panel {
+  background: #0d0d1a; border: 1px solid #0f3460;
+  min-height: 200px; max-height: 280px;
+  display: flex; flex-direction: column;
+}
+.log-panel .panel-title {
+  background: #16213e; color: #e94560;
+  padding: 2px 6px; font-size: 11px;
+  border-bottom: 1px solid #0f3460;
+  flex-shrink: 0;
+}
+.log-panel .panel-body {
+  padding: 4px 6px; font-size: 11px;
+  white-space: pre-wrap; overflow-y: auto;
+  flex: 1;
+  color: #8f8;
+  line-height: 1.35;
+}
 
-  .latency { font-size: .75rem; color: #484f58; font-family: monospace; }
+/* Live Chat */
+.chat-panel {
+  background: #0d0d1a; border: 1px solid #0f3460;
+  margin-bottom: 6px;
+}
+.chat-panel .panel-title {
+  background: #16213e; color: #e94560;
+  padding: 2px 6px; font-size: 11px;
+  border-bottom: 1px solid #0f3460;
+}
+.chat-input-row {
+  display: flex; gap: 4px; padding: 4px;
+  border-bottom: 1px solid #0f3460;
+}
+.chat-input-row input {
+  flex: 1;
+  background: #0d0d1a; border: 1px solid #0f3460;
+  color: #c7c7c7; font-family: monospace; font-size: 12px;
+  padding: 4px 8px;
+}
+.chat-input-row input:focus { outline: none; border-color: #4af; }
+.chat-input-row .btn {
+  background: #0f3460; border: none; color: #c7c7c7;
+  padding: 4px 12px; cursor: pointer; font-family: monospace; font-size: 11px;
+}
+.chat-input-row .btn:hover { background: #1a5276; }
 
-  /* Ingestion */
-  .ingest-area {
-    background: #161b22; border: 1px solid #21262d; border-radius: 6px;
-    padding: 1.5rem; margin-bottom: 1rem;
-  }
-  .ingest-area h2 { font-size: 1rem; margin-bottom: .5rem; }
-  .ingest-area p { color: #8b949e; font-size: .85rem; margin-bottom: 1rem; }
-  .upload-zone {
-    border: 2px dashed #21262d; border-radius: 8px;
-    padding: 2rem; text-align: center; cursor: pointer;
-    margin-bottom: 1rem;
-  }
-  .upload-zone:hover { border-color: #58a6ff; background: #1a1d27; }
-  .upload-zone.dragover { border-color: #3fb950; background: #1a4731; }
-  .upload-zone .icon { font-size: 2rem; margin-bottom: .5rem; }
-  .upload-zone .hint { color: #484f58; font-size: .8rem; margin-top: .3rem; }
+.chat-output {
+  padding: 6px; max-height: 400px; overflow-y: auto;
+  font-size: 12px; line-height: 1.5;
+}
+.chat-thinking {
+  color: #887; font-style: italic;
+}
+.chat-content {
+  color: #c7c7c7;
+}
+.chat-tool {
+  color: #4af; background: #0f346044;
+  padding: 2px 6px; margin: 2px 0; border-radius: 2px;
+  display: inline-block;
+  font-size: 11px;
+}
+.chat-error {
+  color: #e94560;
+}
+.chat-status {
+  color: #6a6a8a; font-size: 11px; padding: 4px;
+}
 
-  .paste-area { margin-bottom: 1rem; }
-  .paste-area textarea {
-    width: 100%; min-height: 120px;
-    background: #0d1117; border: 1px solid #21262d; border-radius: 6px;
-    color: #c9d1d9; padding: .75rem; font-family: monospace; font-size: .8rem;
-    resize: vertical;
-  }
-  .paste-area textarea:focus { outline: none; border-color: #58a6ff; }
+/* Traces panel */
+.traces-panel {
+  background: #0d0d1a; border: 1px solid #0f3460;
+  margin-bottom: 6px;
+}
+.traces-panel .panel-title {
+  background: #16213e; color: #e94560;
+  padding: 2px 6px; font-size: 11px;
+  border-bottom: 1px solid #0f3460;
+}
+.traces-panel .panel-body { max-height: 200px; overflow-y: auto; }
+.trace-row {
+  display: grid;
+  grid-template-columns: 140px 1fr 80px 60px;
+  gap: 4px; padding: 2px 6px; font-size: 11px;
+  border-bottom: 1px solid #0f346022;
+}
+.trace-row:hover { background: #16213e44; }
+.trace-time { color: #6a6a8a; }
+.trace-msg { color: #c7c7c7; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.trace-dec { font-size: 10px; padding: 0 4px; text-align: center; }
+.dec-answer_directly { color: #8f8; }
+.dec-tool_call { color: #4af; }
+.dec-needs_knowledge, .dec-needs_rag { color: #fa0; }
+.dec-memory_recall { color: #c7f; }
+.dec-unknown { color: #666; }
+.trace-lat { color: #6a6a8a; text-align: right; }
 
-  .ingest-actions { display: flex; gap: .5rem; align-items: center; }
-  .btn {
-    padding: .4rem 1rem; border-radius: 6px; border: none;
-    font-size: .85rem; cursor: pointer; font-weight: 500;
-  }
-  .btn-primary { background: #238636; color: #fff; }
-  .btn-primary:hover { background: #2ea043; }
-  .btn-primary:disabled { opacity: .5; cursor: not-allowed; }
+/* Ingestion collapsed */
+.ingest-panel { background: #0d0d1a; border: 1px solid #0f3460; }
+.ingest-panel .panel-title {
+  background: #16213e; color: #e94560;
+  padding: 2px 6px; font-size: 11px; cursor: pointer;
+}
+.ingest-body { display: none; padding: 6px; }
+.ingest-body.open { display: block; }
+.ingest-body input, .ingest-body textarea {
+  background: #0d0d1a; border: 1px solid #0f3460;
+  color: #c7c7c7; font-family: monospace; font-size: 11px;
+  padding: 3px 6px; width: 100%;
+}
+.ingest-body textarea { min-height: 60px; margin-bottom: 4px; }
+.ingest-body .btn {
+  background: #0f3460; border: none; color: #c7c7c7;
+  padding: 4px 12px; cursor: pointer; font-family: monospace; font-size: 11px;
+}
+.ingest-body .btn:hover { background: #1a5276; }
 
-  .ingest-result {
-    margin-top: .75rem; padding: .5rem .75rem; border-radius: 6px;
-    font-size: .85rem; display: none;
-  }
-  .ingest-result.ok { display: block; background: #1a4731; color: #7ee787; }
-  .ingest-result.err { display: block; background: #3b1a1a; color: #f85149; }
-
-  .last-updated { font-size: .7rem; color: #484f58; text-align: right; margin-top: .5rem; }
-
-  .empty-state { text-align: center; padding: 3rem 1rem; color: #484f58; }
-  .empty-state code { background: #161b22; padding: 2px 6px; border-radius: 4px; }
-
-  @media (max-width: 640px) {
-    .trace-header { flex-wrap: wrap; }
-    .trace-user { white-space: normal; }
-  }
+.footer { text-align: right; color: #484848; font-size: 10px; margin-top: 4px; }
 </style>
 </head>
 <body>
 
-<h1>
-  <span>🔍 Cognitive Core</span>
-  <span id="traceCount" style="font-size:.8rem;color:#8b949e;font-family:monospace;">—</span>
-</h1>
-<p class="subtitle">Runtime observability + RAG data ingestion</p>
-
-<!-- Tab bar -->
-<div class="tabs">
-  <div class="tab active" onclick="switchTab('traces')">📊 Traces</div>
-  <div class="tab" onclick="switchTab('ingest')">📥 Ingest</div>
+<!-- Header -->
+<div class="header">
+  <h1>⚡ Cognitive Core</h1>
+  <span class="sub" id="subtitle">router:8081 · rag:8082 · kb:<span id="kbCount">?</span></span>
 </div>
 
-<!-- Traces tab -->
-<div id="tab-traces" class="tab-pane active">
-  <!-- Stats -->
-  <div class="stats-bar">
-    <div class="stat-card"><div class="number" id="statTotal">—</div><div class="label">Total Requests</div></div>
-    <div class="stat-card"><div class="number" id="statAnswer">—</div><div class="label">Answered Directly</div></div>
-    <div class="stat-card"><div class="number" id="statTool">—</div><div class="label">Tool Calls</div></div>
-    <div class="stat-card"><div class="number" id="statRag">—</div><div class="label">RAG Queries</div></div>
-    <div class="stat-card"><div class="number" id="statMemory">—</div><div class="label">Memory Accesses</div></div>
-    <div class="stat-card"><div class="number" id="statLatency">—</div><div class="label">Avg Latency (ms)</div></div>
-  </div>
+<!-- Stats -->
+<div class="stats" id="statsRow">
+  <div class="stat"><div class="num" id="sTraces">—</div><div class="lbl">Traces</div></div>
+  <div class="stat"><div class="num" id="sVram">—</div><div class="lbl">VRAM</div></div>
+  <div class="stat"><div class="num" id="sKb">—</div><div class="lbl">Chunks</div></div>
+</div>
 
-  <div id="traceFeed" class="trace-feed">
-    <div class="empty-state" id="emptyState">
-      <p style="margin-bottom:.5rem;">Waiting for traces...</p>
-      <p style="font-size:.75rem;">The cognitive core logs decisions to <code>/var/log/cognitive-core/traces.jsonl</code></p>
-    </div>
+<!-- Log Grid -->
+<div class="main-grid">
+  <div class="log-panel">
+    <div class="panel-title">📜 Router — MiniCPM5-1B :8081</div>
+    <div class="panel-body" id="routerLog">Loading...</div>
+  </div>
+  <div class="log-panel">
+    <div class="panel-title">📜 RAG — Granite 4.1-8B :8082</div>
+    <div class="panel-body" id="ragLog">Loading...</div>
   </div>
 </div>
 
-<!-- Ingest tab -->
-<div id="tab-ingest" class="tab-pane">
-  <div class="ingest-area">
-    <h2>📥 Upload File</h2>
-    <p>Upload code samples, documentation, man pages, past projects — anything you want the router to know about.</p>
-
-    <div class="upload-zone" id="uploadZone" onclick="document.getElementById('fileInput').click()">
-      <div class="icon">📄</div>
-      <div>Click or drop a file here</div>
-      <div class="hint">.txt, .md, .py, .js, .sh, .jsonl, .pdf</div>
-    </div>
-    <input type="file" id="fileInput" style="display:none" accept=".txt,.md,.py,.js,.ts,.go,.rs,.sh,.jsonl,.csv,.json,.yaml" onchange="uploadFile(this.files[0])">
-
-    <details style="margin-bottom:.75rem;">
-      <summary style="cursor:pointer;color:#8b949e;font-size:.85rem;">Or paste text directly</summary>
-      <div class="paste-area">
-        <textarea id="pasteText" placeholder="Paste code, documentation, or notes here..."></textarea>
-        <div class="ingest-actions">
-          <input id="pasteSource" type="text" placeholder="Source name (e.g. ffmpeg-man, project-alpha)" style="flex:1;background:#0d1117;border:1px solid #21262d;border-radius:6px;color:#c9d1d9;padding:.4rem .6rem;font-size:.85rem;">
-          <button class="btn btn-primary" onclick="pasteIngest()">Ingest</button>
-        </div>
-      </div>
-    </details>
-
-    <div id="ingestResult" class="ingest-result"></div>
-
-    <div style="margin-top:.5rem;font-size:.8rem;color:#484f58;">
-      <span id="kbCount">Chroma KB: —</span>
-    </div>
+<!-- Live Chat -->
+<div class="chat-panel">
+  <div class="panel-title">💬 Live Chat — watch the model think in real-time</div>
+  <div class="chat-input-row">
+    <input id="chatInput" type="text" placeholder="type a prompt here..." onkeydown="if(event.key==='Enter')sendChat()">
+    <button class="btn" onclick="sendChat()">Send</button>
+    <button class="btn" onclick="document.getElementById('chatOutput').innerHTML=''" style="color:#6a6a8a;">Clear</button>
+  </div>
+  <div class="chat-output" id="chatOutput">
+    <div class="chat-status">Type a prompt above to watch the model reason and call tools live.</div>
   </div>
 </div>
 
-<div class="last-updated" id="lastUpdated">Last updated: —</div>
+<!-- Traces -->
+<div class="traces-panel">
+  <div class="panel-title">📊 Traces · last <span id="traceCount">0</span></div>
+  <div class="panel-body" id="tracesFeed"><div style="color:#484848;padding:6px;font-size:11px;">Waiting for traces...</div></div>
+</div>
+
+<!-- Ingestion -->
+<div class="ingest-panel">
+  <div class="panel-title" onclick="toggleIngest()">📥 Ingest &#9660;</div>
+  <div class="ingest-body" id="ingestBody">
+    <textarea id="pasteText" placeholder="paste text or code..."></textarea>
+    <div style="display:flex;gap:4px;">
+      <input id="pasteSource" placeholder="source name" style="flex:1;">
+      <button class="btn" onclick="ingest()">Ingest</button>
+    </div>
+    <div id="ingestResult" style="margin-top:4px;font-size:11px;"></div>
+  </div>
+</div>
+
+<div class="footer" id="lastUpdated"></div>
 
 <script>
-function switchTab(name) {
-  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-  document.querySelectorAll('.tab-pane').forEach(t => t.classList.remove('active'));
-  document.querySelector(`.tab[onclick*="'${name}'"]`).classList.add('active');
-  document.getElementById(`tab-${name}`).classList.add('active');
-  if (name === 'ingest') updateKbCount();
+function toggleIngest() {
+  document.getElementById('ingestBody').classList.toggle('open');
 }
 
 function esc(s) {
@@ -462,171 +502,136 @@ function esc(s) {
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
 
-function renderTrace(t) {
-  const ts = t.timestamp ? t.timestamp.replace('T', ' ').slice(0,19) : '?';
-  const decision = t.decision || 'unknown';
-  const user = esc(t.user || '(no prompt)');
-  const lat = t.latency_ms != null ? t.latency_ms + 'ms' : '';
-  let bodyHtml = '';
-
-  if (t.router_response) {
-    const snippet = t.router_response.length > 200
-      ? esc(t.router_response.slice(0,200)) + '...'
-      : esc(t.router_response);
-    bodyHtml += `<div style="margin-top:.3rem;color:#c9d1d9;">${snippet}</div>`;
-  }
-
-  if (t.rag) {
-    const rag = t.rag;
-    let ragHtml = `<span class="label">RAG</span>`;
-    if (rag.collection) ragHtml += `\n  Collection: ${esc(rag.collection)}`;
-    if (rag.query) ragHtml += `\n  Query: ${esc(rag.query)}`;
-    if (rag.retrieved_chunks) {
-      ragHtml += `\n  Chunks: ${rag.retrieved_chunks.length} retrieved`;
-      rag.retrieved_chunks.slice(0, 3).forEach(c =>
-        ragHtml += `\n    · ${esc(String(c).slice(0, 100))}`
-      );
-    }
-    if (rag.model) ragHtml += `\n  Model: ${esc(rag.model)}`;
-    bodyHtml += `<div class="rag-block">${ragHtml}</div>`;
-  }
-
-  if (t.tool) {
-    const tool = t.tool;
-    let toolHtml = `<span class="label">Tool</span>`;
-    toolHtml += `\n  Call: ${esc(tool.name)}(${JSON.stringify(tool.parameters || {})})`;
-    if (tool.result) {
-      const r = String(tool.result);
-      toolHtml += `\n  Result: ${esc(r.length > 150 ? r.slice(0,150) + '...' : r)}`;
-    }
-    bodyHtml += `<div class="tool-block">${toolHtml}</div>`;
-  }
-
-  if (t.memory) {
-    const mem = t.memory;
-    let memHtml = `<span class="label">Memory</span>`;
-    if (mem.recalled && mem.recalled.length > 0) memHtml += `\n  Recalled: ${mem.recalled.length} items`;
-    if (mem.stored) memHtml += `\n  Stored: ✓`;
-    bodyHtml += `<div class="memory-block">${memHtml}</div>`;
-  }
-
-  return `
-    <div class="trace">
-      <div class="trace-header">
-        <span class="trace-time">${ts}</span>
-        <span class="trace-user">${user}</span>
-        <span class="trace-decision decision-${decision}">${decision}</span>
-        ${lat ? `<span class="latency">${lat}</span>` : ''}
-      </div>
-      ${bodyHtml ? `<div class="trace-body">${bodyHtml}</div>` : ''}
-    </div>
-  `;
+function renderTraces(traces) {
+  if (!traces || traces.length === 0)
+    return '<div style="color:#484848;padding:6px;font-size:11px;">No traces yet.</div>';
+  return traces.map(t => {
+    const ts = (t.timestamp || '').replace('T',' ').slice(0,19) || '?';
+    const dec = t.decision || 'unknown';
+    const user = esc(t.user || t.prompt || '').slice(0, 80);
+    const lat = t.latency_ms != null ? t.latency_ms + 'ms' : '';
+    return `<div class="trace-row">
+      <span class="trace-time">${ts}</span>
+      <span class="trace-msg">${user}</span>
+      <span class="trace-dec dec-${dec}">${dec}</span>
+      <span class="trace-lat">${lat}</span>
+    </div>`;
+  }).join('');
 }
 
 function update() {
-  fetch('/api/traces').then(r => r.json()).then(d => {
-    const feed = document.getElementById('traceFeed');
-    const empty = document.getElementById('emptyState');
-    if (d.traces.length === 0) {
-      if (empty) empty.style.display = 'block';
-      return;
-    }
-    if (empty) empty.style.display = 'none';
-    document.getElementById('traceCount').textContent = d.count + ' traces';
-    feed.innerHTML = d.traces.slice().reverse().map(renderTrace).join('');
+  fetch('/api/data').then(r => r.json()).then(d => {
+    document.getElementById('routerLog').textContent = d.router_log || '(empty)';
+    document.getElementById('ragLog').textContent = d.rag_log || '(empty)';
+    document.getElementById('traceCount').textContent = d.trace_count;
+    document.getElementById('tracesFeed').innerHTML = renderTraces(d.traces);
+    document.getElementById('kbCount').textContent = d.chroma_count >= 0 ? d.chroma_count : '?';
+    document.getElementById('sTraces').textContent = d.trace_count;
+    document.getElementById('sKb').textContent = d.chroma_count >= 0 ? d.chroma_count : '-';
   });
-
-  fetch('/api/stats').then(r => r.json()).then(d => {
-    document.getElementById('statTotal').textContent = d.total || 0;
-    document.getElementById('statAnswer').textContent = (d.by_decision && d.by_decision.answer_directly) || 0;
-    document.getElementById('statTool').textContent = d.tool_count || 0;
-    document.getElementById('statRag').textContent = d.rag_count || 0;
-    document.getElementById('statMemory').textContent = d.memory_count || 0;
-    document.getElementById('statLatency').textContent = d.avg_latency_ms || 0;
+  fetch('/api/vram').then(r => r.json()).then(d => {
+    document.getElementById('sVram').textContent = d.vram || 'N/A';
   });
-
-  document.getElementById('lastUpdated').textContent = 'Last updated: ' + new Date().toLocaleTimeString();
+  document.getElementById('lastUpdated').textContent = 'updated: ' + new Date().toLocaleTimeString();
 }
 
-function updateKbCount() {
-  fetch('/api/ingest/stats').then(r => r.json()).then(d => {
-    document.getElementById('kbCount').textContent = 'Chroma KB: ' + (d.count || 0) + ' chunks';
-  }).catch(() => {});
-}
+// ── Live Chat ──
+function sendChat() {
+  const input = document.getElementById('chatInput');
+  const prompt = input.value.trim();
+  if (!prompt) return;
+  input.value = '';
+  const out = document.getElementById('chatOutput');
+  out.innerHTML += '<div class="chat-status" style="color:#4af;">\u25b6 <b>' + esc(prompt) + '</b></div>';
 
-function uploadFile(file) {
-  if (!file) return;
-  const formData = new FormData();
-  formData.append('file', file);
-  formData.append('source', file.name);
-  doIngest(formData);
-}
+  fetch('/api/chat', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({prompt})
+  }).then(async response => {
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+    let eventType = '';
+    let reasoningDiv = null;
+    let contentDiv = null;
 
-function pasteIngest() {
-  const text = document.getElementById('pasteText').value;
-  const source = document.getElementById('pasteSource').value || 'paste-' + Date.now();
-  if (!text.trim()) return;
-  const formData = new FormData();
-  formData.append('file', new Blob([text], {type: 'text/plain'}), source);
-  formData.append('source', source);
-  doIngest(formData);
-}
+    while (true) {
+      const {done, value} = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, {stream: true});
 
-function doIngest(formData) {
-  const btn = document.querySelector('.btn-primary');
-  const result = document.getElementById('ingestResult');
-  btn.disabled = true;
-  result.className = 'ingest-result';
-  result.textContent = 'Ingesting...';
+      // SSE messages separated by blank lines
+      const msgs = buf.split('\n\n');
+      buf = msgs.pop() || '';
 
-  fetch('/api/ingest', { method: 'POST', body: formData })
-    .then(r => r.json())
-    .then(d => {
-      if (d.status === 'ok') {
-        result.className = 'ingest-result ok';
-        result.textContent = `✓ Ingested ${d.chunks} chunks from "${d.source}" (${d.total_chars} chars)`;
-        updateKbCount();
-      } else {
-        result.className = 'ingest-result err';
-        result.textContent = '✗ ' + (d.message || 'Unknown error');
+      for (const msg of msgs) {
+        const lines = msg.split('\n');
+        let data = '';
+        for (const line of lines) {
+          if (line.startsWith('event: ')) eventType = line.slice(7).trim();
+          else if (line.startsWith('data: ')) data = line.slice(6);
+        }
+        if (!data) continue;
+        try { data = JSON.parse(data); } catch(e) {}
+
+        if (eventType === 'reasoning') {
+          if (!reasoningDiv) {
+            reasoningDiv = document.createElement('div');
+            reasoningDiv.className = 'chat-thinking';
+            reasoningDiv.textContent = data;
+            out.appendChild(reasoningDiv);
+          } else {
+            reasoningDiv.textContent += data;
+          }
+        } else if (eventType === 'content') {
+          if (!contentDiv) {
+            contentDiv = document.createElement('div');
+            contentDiv.className = 'chat-content';
+            out.appendChild(contentDiv);
+          }
+          contentDiv.textContent += data;
+        } else if (eventType === 'error') {
+          out.innerHTML += '<div class="chat-error">\u26a0 ' + esc(data) + '</div>';
+        } else if (eventType === 'done') {
+          out.innerHTML += '<div class="chat-status" style="color:#484848;">\u2713 done</div>';
+        }
+        out.scrollTop = out.scrollHeight;
       }
-    })
-    .catch(e => {
-      result.className = 'ingest-result err';
-      result.textContent = '✗ ' + e.message;
-    })
-    .finally(() => { btn.disabled = false; });
+    }
+  }).catch(err => {
+    out.innerHTML += '<div class="chat-error">\u26a0 ' + esc(err.message) + '</div>';
+  });
 }
-
-// Drag & drop
-const zone = document.getElementById('uploadZone');
-zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('dragover'); });
-zone.addEventListener('dragleave', () => zone.classList.remove('dragover'));
-zone.addEventListener('drop', e => {
-  e.preventDefault();
-  zone.classList.remove('dragover');
-  uploadFile(e.dataTransfer.files[0]);
-});
-
-setInterval(update, 2000);
+setInterval(update, 3000);
 update();
 </script>
 </body>
 </html>
 """
 
+# ═══════════════════════════════════════════════════════════════
+#  Main
+# ═══════════════════════════════════════════════════════════════
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description="Cognitive Core Runtime Dashboard")
     ap.add_argument("--port", type=int, default=8766)
     ap.add_argument("--host", default="0.0.0.0")
-    ap.add_argument("--traces", default=TRACES_PATH, help="Path to traces JSONL file")
-    ap.add_argument("--chroma-path", default=CHROMA_PATH, help="Path to Chroma DB directory")
     args = ap.parse_args()
 
-    Handler = _handler_class(args.traces, args.chroma_path)
+    # Install requests in a thread-safe way for the chat proxy
+    try:
+        import requests as _req
+    except ImportError:
+        import subprocess, sys
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "requests", "-q"])
+        import requests as _req
+
     server = HTTPServer((args.host, args.port), Handler)
     print(f"Cognitive Core Dashboard → http://{args.host}:{args.port}")
-    print(f"  Traces: {args.traces}")
-    print(f"  Chroma: {args.chroma_path}")
+    print(f"  Live chat: type a prompt and watch the model think + call tools")
+    print(f"  Router log: {ROUTER_LOG}")
+    print(f"  RAG log:    {RAG_LOG}")
+    print(f"  Traces:     {TRACES_PATH}")
     server.serve_forever()
