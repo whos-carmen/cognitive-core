@@ -21,13 +21,13 @@ PRESETS = {
         "notes": "L4 (24GB): 16K context, effective batch 24"
     },
     "a10g": {
-        "max_len": 16384,
-        "train_cap": 16384,
-        "accum": 24,
+        "max_len": 4096,
+        "train_cap": 4096,
+        "accum": 6,
         "neftune": 5,
         "lr": 1e-5,
-        "bsz": 1,
-        "notes": "A10G (24GB): 16K context, effective batch 24 [default]"
+        "bsz": 4,
+        "notes": "A10G (24GB): 4K context, batch 4, fastest"
     },
     "l40s": {
         "max_len": 24576,
