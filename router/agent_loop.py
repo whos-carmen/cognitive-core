@@ -261,6 +261,7 @@ class Agent:
                     if on_token:
                         on_token("reasoning", r)
             full_text = content + reasoning
+
             self._write_log(CHAT_LOG, {
                 "timestamp": datetime.now().isoformat(),
                 "type": "router_response",
@@ -272,11 +273,22 @@ class Agent:
             # ── Check for tool calls ──
             calls = parse_tool_calls(full_text)
 
-            # Now that we know if there are tool calls, stream content or status
-            if on_token and not calls:
-                # No tool calls — flush the buffered content
-                for chunk_text in [content[i:i+50] for i in range(0, len(content), 50)]:
-                    on_token("content", chunk_text)
+            # If no tool calls from router → always delegate to Granite 8B
+            if not calls:
+                if on_token:
+                    for chunk_text in [content[i:i+50] for i in range(0, len(content), 50)]:
+                        on_token("content", chunk_text)
+                    on_token("reasoning", "\n[delegating to Granite 8B]\n")
+                granite_result = self._delegate_to_granite(prompt)
+                if granite_result:
+                    if on_token:
+                        on_token("content", granite_result)
+                    self._save_session(session_id, session_history, prompt, granite_result, [])
+                    self._write_trace(prompt, "granite_respond", granite_result)
+                    return granite_result
+                # Granite failed → cascade
+                messages.append({"role": "user", "content": f"Please use the web_search tool to find information. Search for: {prompt}"})
+                continue
 
             if not calls:
                 # If content has a substantive answer (not just thinking), return it directly
@@ -542,6 +554,23 @@ class Agent:
             print(f"  Agent model error: {e}")
             return None
 
+    def _delegate_to_granite(self, prompt: str) -> str | None:
+        "Send a prompt to Granite 4.1-8B for a general response. Used when router shouldn't answer directly."
+        try:
+            client = OpenAI(base_url=RAG_URL, api_key="not-needed")
+            response = client.chat.completions.create(
+                model="granite",
+                messages=[
+                    {"role": "system", "content": "You are a helpful AI assistant running in the Cognitive Core system. Answer questions clearly and concisely."},
+                    {"role": "user", "content": prompt},
+                ],
+                max_tokens=600,
+            )
+            return response.choices[0].message.content
+        except Exception as e:
+            print(f"  Granite delegation error: {e}")
+            return None
+
     def _exec_builtin(self, name, params, mapping):
         """Execute a built-in tool (shell command, file search, etc.)."""
         import subprocess
@@ -619,6 +648,24 @@ class Agent:
                 return response.choices[0].message.content or "(no response)"
             except Exception as e:
                 return f"RAG query error: {e}"
+
+        if name == "granite_respond":
+            return self._delegate_to_granite(params.get("prompt", ""))
+
+        if name == "agent_task":
+            prompt = params.get("prompt", "")
+            if not prompt:
+                return "Error: no prompt provided"
+            try:
+                client = OpenAI(base_url=self._agent_cfg.get("url", RAG_URL), api_key="not-needed")
+                model = self._agent_cfg.get("model") or None
+                response = client.chat.completions.create(
+                    model=model, messages=[{"role": "system", "content": "You are an agentic assistant. Complete the task using available tools and information."}, {"role": "user", "content": prompt}],
+                    max_tokens=800,
+                )
+                return response.choices[0].message.content or "(no response)"
+            except Exception as e:
+                return f"Agent task error: {e}"
 
         if name == "rag_status":
             try:

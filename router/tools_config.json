@@ -92,6 +92,20 @@
       "param_mapping": {
         "query": "query"
       }
+    },
+    "granite_respond": {
+      "description": "Delegate a general question to Granite 4.1-8B for a helpful answer. Use for any Q&A, explanations, or when the user asks a question that needs a thoughtful response.",
+      "type": "builtin",
+      "param_mapping": {
+        "prompt": "prompt"
+      }
+    },
+    "agent_task": {
+      "description": "Send a multi-step or tool-using task to Qwen 4B agent. Use when the task needs bash commands, web search, file operations, or multiple steps.",
+      "type": "builtin",
+      "param_mapping": {
+        "prompt": "prompt"
+      }
     }
   }
 }
