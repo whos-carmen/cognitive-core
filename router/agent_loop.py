@@ -390,6 +390,24 @@ class Agent:
                 elif mapping.get("type") == "builtin":
                     # Built-in tool: execute locally
                     result = self._exec_builtin(tool_name, tool_params, mapping)
+                    # If granite_respond returned a placeholder, fall back to web search
+                    if tool_name == "granite_respond" and result and len(result) < 100:
+                        placeholders = ["go ahead", "please go", "i'm ready", "i am ready", "how can i help", "what would you", "ask your question", "i understand"]
+                        if any(p in result.lower() for p in placeholders):
+                            # Redirect to web search via MCP
+                            ws_map = self.tool_mappings.get("web_search")
+                            if ws_map:
+                                mcp_p = {}
+                                for mk, mv in ws_map.get("param_mapping", {}).items():
+                                    if mk in tool_params:
+                                        mcp_p[mv] = tool_params[mk]
+                                    elif mk in {"query", "q"}:
+                                        mcp_p[mv] = tool_params.get(mk, prompt)
+                                for k, v in ws_map.get("default_params", {}).items():
+                                    if k not in mcp_p:
+                                        mcp_p[k] = v
+                                result = await self.mcp.call_tool(ws_map["mcp_server"], ws_map["mcp_tool"], mcp_p)
+                                tool_name = "web_search" 
                 else:
                     # Keyword-based RAG routing (intercept web_search for RAG questions)
                     if tool_name in ("web_search", "tavily_search"):
