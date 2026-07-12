@@ -391,15 +391,12 @@ class Agent:
                     # Built-in tool: execute locally
                     result = self._exec_builtin(tool_name, tool_params, mapping)
                 else:
-                    # Local-first: check local files before web search
+                    # Keyword-based RAG routing (intercept web_search for RAG questions)
                     if tool_name in ("web_search", "tavily_search"):
-                        # First: keyword-based routing for RAG questions (fast, no model needed)
                         rag_keywords = ["rag", "knowledge base", "chroma", "retrieval", "ingest", "stored in", "what info", "entries", "currently"]
                         meta_kw = ["what info", "stored in", "entries", "currently"]
-                        is_rag_question = any(kw in prompt.lower() for kw in rag_keywords)
-                        use_status = any(kw in prompt.lower() for kw in meta_kw)
-                        if is_rag_question:
-                            tool_for_rag = "rag_status" if use_status else "rag_query"
+                        if any(kw in prompt.lower() for kw in rag_keywords):
+                            tool_for_rag = "rag_status" if any(kw in prompt.lower() for kw in meta_kw) else "rag_query"
                             rag_map = self.tool_mappings.get(tool_for_rag)
                             if rag_map:
                                 rag_result = self._exec_builtin(tool_for_rag, {} if tool_for_rag == "rag_status" else {"query": prompt}, rag_map)
@@ -411,53 +408,38 @@ class Agent:
                                     self._write_trace(prompt, tool_for_rag, rag_result)
                                     self._write_log(TOOLS_LOG, {"timestamp": str(datetime.now()), "tool": tool_for_rag, "result_snippet": rag_result[:200]})
                                     return rag_result
-                        # Second: ask agent model what tool to use
-                        if self._agent_cfg.get("enabled"):
-                            agent_advice = self._query_agent(f"The user asked: {prompt}\nWhich tool should be used? Options: rag_query (for project knowledge), web_search (for current events/web info), file_search (for finding files), shell_exec (for bash commands). Reply with just the tool name and parameters in XML format: <function name=\"tool\"><param name=\"param\">value</param></function>")
-                            if agent_advice and "<function" in agent_advice:
-                                if on_token:
-                                    on_token("reasoning", "\n[agent model recommended a different tool]\n")
-                                agent_calls = parse_tool_calls(agent_advice)
-                                if agent_calls:
-                                    new_name = agent_calls[0]["name"]
-                                    new_params = agent_calls[0]["parameters"]
-                                    # Re-lookup the mapping and execute
-                                    new_map = self.tool_mappings.get(new_name)
-                                    if new_map:
-                                        if new_map.get("type") == "builtin":
-                                            result = self._exec_builtin(new_name, new_params, new_map)
-                                            if on_token:
-                                                on_token("content", str(result)[:2000])
-                                            self._write_trace(prompt, f"tool_call:{new_name}", str(result)[:200])
-                                            self._write_log(TOOLS_LOG, {"timestamp": str(datetime.now()), "tool": new_name, "parameters": new_params, "result_snippet": str(result)[:200]})
-                                            return str(result)
-                                        else:
-                                            # Route to MCP
-                                            mcp_params = {}
-                                            for mk, mv in new_map.get("param_mapping", {}).items():
-                                                if mk in new_params:
-                                                    mcp_params[mv] = new_params[mk]
-                                            for k, v in new_map.get("default_params", {}).items():
-                                                if k not in mcp_params:
-                                                    mcp_params[k] = v
-                                            result = await self.mcp.call_tool(new_map["mcp_server"], new_map["mcp_tool"], mcp_params)
-                                            synthesis = self._synthesize(prompt, result, on_token)
-                                            self._write_trace(prompt, f"tool_call:{new_name}", str(result)[:200])
-                                            self._write_log(TOOLS_LOG, {"timestamp": str(datetime.now()), "tool": new_name, "parameters": new_params, "result_snippet": str(result)[:200]})
-                                            return synthesis
-
-                        if is_project_query:
-                            local_hit = self._quick_local_search(prompt)
-                        else:
-                            local_hit = None
-                        if local_hit and "No files" not in local_hit:
+                    # Agent model can suggest a different tool for any tool type
+                    if self._agent_cfg.get("enabled"):
+                        agent_advice = self._query_agent(f"The user asked: {prompt}\nWhich tool should be used? Options: rag_query (for project knowledge), granite_respond (for general Q&A), web_search (for current events/web info), shell_exec (for bash commands), file_search (for finding files). Reply with just the tool name and parameters in XML: <function name=\"tool\"><param name=\"param\">value</param></function>")
+                        if agent_advice and "<function" in agent_advice:
                             if on_token:
-                                on_token("reasoning", "\n[found matching local files, skipping web search]\n")
-                                on_token("content", local_hit)
-                            self._save_session(session_id, session_history, prompt, local_hit, [])
-                            self._write_trace(prompt, "local_file_search", local_hit)
-                            self._write_log(TOOLS_LOG, {"timestamp": str(datetime.now()), "tool": "local_file_search", "parameters": {"prompt": prompt}, "result_snippet": local_hit[:200]})
-                            return local_hit
+                                on_token("reasoning", "\n[agent model recommended a different tool]\n")
+                            agent_calls = parse_tool_calls(agent_advice)
+                            if agent_calls:
+                                new_name = agent_calls[0]["name"]
+                                new_params = agent_calls[0]["parameters"]
+                                new_map = self.tool_mappings.get(new_name)
+                                if new_map:
+                                    if new_map.get("type") == "builtin":
+                                        result = self._exec_builtin(new_name, new_params, new_map)
+                                        if on_token:
+                                            on_token("content", str(result)[:2000])
+                                        self._write_trace(prompt, f"tool_call:{new_name}", str(result)[:200])
+                                        self._write_log(TOOLS_LOG, {"timestamp": str(datetime.now()), "tool": new_name, "parameters": new_params, "result_snippet": str(result)[:200]})
+                                        return str(result)
+                                    else:
+                                        mcp_params = {}
+                                        for mk, mv in new_map.get("param_mapping", {}).items():
+                                            if mk in new_params:
+                                                mcp_params[mv] = new_params[mk]
+                                        for k, v in new_map.get("default_params", {}).items():
+                                            if k not in mcp_params:
+                                                mcp_params[k] = v
+                                        result = await self.mcp.call_tool(new_map["mcp_server"], new_map["mcp_tool"], mcp_params)
+                                        synthesis = self._synthesize(prompt, result, on_token)
+                                        self._write_trace(prompt, f"tool_call:{new_name}", str(result)[:200])
+                                        self._write_log(TOOLS_LOG, {"timestamp": str(datetime.now()), "tool": new_name, "parameters": new_params, "result_snippet": str(result)[:200]})
+                                        return synthesis
                     # MCP tool: execute via MCP server
                     mcp_params = {}
                     param_map = mapping.get("param_mapping", {})
