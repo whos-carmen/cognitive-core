@@ -446,7 +446,10 @@ class Agent:
                                             self._write_log(TOOLS_LOG, {"timestamp": str(datetime.now()), "tool": new_name, "parameters": new_params, "result_snippet": str(result)[:200]})
                                             return synthesis
 
-                        local_hit = self._quick_local_search(prompt)
+                        if is_project_query:
+                            local_hit = self._quick_local_search(prompt)
+                        else:
+                            local_hit = None
                         if local_hit and "No files" not in local_hit:
                             if on_token:
                                 on_token("reasoning", "\n[found matching local files, skipping web search]\n")
