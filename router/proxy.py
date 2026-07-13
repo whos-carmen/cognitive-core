@@ -239,6 +239,9 @@ class Handler(BaseHTTPRequestHandler):
     def _handle_chat(self):
         length = int(self.headers.get("Content-Length", 0))
         body = json.loads(self.rfile.read(length))
+        # Strip OpenAI-specific fields that we don't support
+        body.pop("stream_options", None)
+        body.pop("stream", None)
         messages = body.get("messages", [])
         model = body.get("model", "auto")
         stream = body.get("stream", False)
