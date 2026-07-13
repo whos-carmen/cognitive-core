@@ -72,6 +72,15 @@ SIMPLE_KEYWORDS = [
     "hello", "hi", "hey", "thanks", "what is 2", "what's 2", "what is the capital",
     "yes", "no", "ok", "okay", "goodbye", "bye", "who are you",
 ]
+CODING_KEYWORDS = [
+    "haskell", "python", "javascript", "typescript", "rust", "golang", "java", "cpp", "c++", "c#", "swift",
+    "kotlin", "ruby", "php", "scala", "perl", "lua", "elixir", "clojure", "dart", "sql",
+    "function", "class", "method", "variable", "loop", "array", "list", "dict", "string", "int",
+    "code", "program", "script", "algorithm", "compile", "debug", "error", "bug", "test",
+    "api", "endpoint", "route", "database", "query", "server", "client", "frontend", "backend",
+    "recursion", "lambda", "monad", "functor", "applicative", "typeclass", "instance", "derive",
+]
+
 COMPLEX_PATTERNS = [
     r"\bwrite\b.*\bcode\b", r"\bimplement\b", r"\bcreate a\b.*\bfunction\b",
     r"\breview\b.*\bcode\b", r"\bsecurity\b.*\breview\b", r"\brefactor\b",
@@ -166,7 +175,7 @@ def call_qwen(messages: list, system: str = None, max_tokens: int = 1000) -> str
     try:
         r = client.chat.completions.create(model="qwen2.5-coder-7b", messages=messages, max_tokens=max_tokens)
         content = r.choices[0].message.content or ""
-        reasoning = r.choices[0].message.reasoning_content or ""
+        reasoning = getattr(r.choices[0].message, "reasoning_content", "") or ""
         return content or reasoning or ""
     except Exception as e:
         return f"Error: {e}"
@@ -273,8 +282,11 @@ class Handler(BaseHTTPRequestHandler):
         needs_web = any(kw in last_user.lower() for kw in ["himeko", "hsr", "honkai", "genshin", "star rail", "zzz", "wuthering", "anime", "manga", "best teammate", "tier list", "build", "weapon", "team comp", "games", "pop culture", "current", "news", "weather", "latest", "search", "find", "who is", "what is"])
         needs_rag = any(kw in last_user.lower() for kw in ["rag", "knowledge base", "chroma", "what info", "stored in"])
 
-        # Route
-        if needs_web:
+        # Coding questions → coder model regardless of complexity
+        if any(kw in last_user.lower() for kw in CODING_KEYWORDS):
+            response = call_qwen(messages, max_tokens=max_tokens)
+            route_info = "coder"
+        elif needs_web:
             response = web_search(last_user)
             route_info = "web_search"
         elif needs_rag:
