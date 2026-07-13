@@ -260,14 +260,7 @@ class Agent:
                     reasoning += r
             full_text = content + reasoning
 
-            self._write_log(CHAT_LOG, {
-                "timestamp": datetime.now().isoformat(),
-                "type": "router_response",
-                "turn": turn,
-                "prompt": prompt,
-                "reasoning": reasoning[:500],
-                "content": content[:500],
-            })
+            # Chat log entry is written after tool result, not here
             # ── Check for tool calls ──
             calls = parse_tool_calls(full_text)
 
@@ -834,6 +827,12 @@ class Agent:
                 history.append({"role": "tool", "content": str(tc.get("result",""))[:2000], "name": tc.get("name","?")})
             with open(session_path, "w") as f:
                 json.dump(history, f, indent=2)
+            self._write_log(CHAT_LOG, {
+                "timestamp": datetime.now().isoformat(),
+                "type": "chat",
+                "user": user_msg,
+                "assistant": str(assistant_msg)[:500],
+            })
         except Exception as _e:
             print(f"  [session save error] {_e}")
 
