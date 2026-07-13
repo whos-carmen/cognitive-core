@@ -484,6 +484,8 @@ class Agent:
                     "result_snippet": str(result)[:500],
                 })
                 # For web search tools: synthesize results with Granite instead of 1B router
+                if tool_name == "clarify":
+                    return result
                 if tool_name in ("web_search", "web_fetch", "tavily_search", "tavily_research", "shell_exec", "file_search"):
                     synthesis = self._synthesize(prompt, result, on_token)
                     self._save_session(session_id, session_history, prompt, synthesis, [])
@@ -651,6 +653,12 @@ class Agent:
                 return response.choices[0].message.content or "(no response)"
             except Exception as e:
                 return f"RAG query error: {e}"
+
+        if name == "clarify":
+            question = params.get("question", "")
+            if not question:
+                question = params.get("param_name", "")
+            return f"[CLARIFY:{question}]"
 
         if name == "granite_respond":
             return self._delegate_to_granite(params.get("prompt", ""))

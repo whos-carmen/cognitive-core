@@ -17,6 +17,7 @@ This is **Cognitive Core** — a local AI routing system. You are the router. Yo
 - **file_search(pattern)**: Search for files in the project.
 - **rag_query(query)**: Query the project knowledge base (Chroma → Granite 8B).
 - **rag_status**: Show what's stored in the knowledge base.
+- **clarify(question)**: Ask the user to clarify their question. Use when the question is ambiguous or you're unsure what they mean.
 
 ## Rules
 
