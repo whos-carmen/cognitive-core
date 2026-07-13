@@ -260,7 +260,7 @@ class Handler(BaseHTTPRequestHandler):
         agent_type = classify_agent_task(last_user) if complexity == "complex" else None
 
         # Check if web search is needed
-        needs_web = complexity == "complex" and any(kw in last_user.lower() for kw in ["what is hsr", "himeko", "current", "news", "weather", "game", "honkai", "release", "price", "latest", "search", "find", "who is", "best teammate", "teams for", "tier list"])
+        needs_web = complexity == "complex" and any(kw in last_user.lower() for kw in ["what is hsr", "himeko", "current", "news", "weather", "game", "honkai", "release", "price", "latest", "search", "find", "who is", "best teammate", "teams for", "tier list", "hoyoverse", "genshin", "star rail", "zzz", "wuthering", "anime", "manga", "character", "build", "weapon", "team"])
         needs_rag = any(kw in last_user.lower() for kw in ["rag", "knowledge base", "chroma", "what info", "stored in"])
 
         # Route

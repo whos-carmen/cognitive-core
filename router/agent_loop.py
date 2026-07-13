@@ -419,7 +419,7 @@ class Agent:
                                     return rag_result
                     # Agent model can suggest a different tool for any tool type
                     if self._agent_cfg.get("enabled"):
-                        agent_advice = self._query_agent(f"The user asked: {prompt}\nWhich tool should be used? Options: rag_query (for project knowledge), granite_respond (for general Q&A), web_search (for current events/web info), shell_exec (for bash commands), file_search (for finding files). Reply with just the tool name and parameters in XML: <function name=\"tool\"><param name=\"param\">value</param></function>")
+                        agent_advice = self._query_agent(f"The user asked: {prompt}\nWhich tool should be used? Options: web_search (for current events, web info, games, pop culture, news, people, media — USE THIS FIRST if unsure), rag_query (for project knowledge), granite_respond (for general Q&A), shell_exec (for bash commands), file_search (for finding files). Reply with just the tool name and parameters in XML: <function name=\"tool\"><param name=\"param\">value</param></function>")
                         if agent_advice and "<function" in agent_advice:
                             if on_token:
                                 on_token("reasoning", "\n[agent model recommended a different tool]\n")
