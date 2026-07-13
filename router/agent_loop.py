@@ -258,8 +258,6 @@ class Agent:
                     content += c
                 if r:
                     reasoning += r
-                    if on_token:
-                        on_token("reasoning", r)
             full_text = content + reasoning
 
             self._write_log(CHAT_LOG, {
