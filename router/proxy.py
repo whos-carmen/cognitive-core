@@ -72,15 +72,6 @@ SIMPLE_KEYWORDS = [
     "hello", "hi", "hey", "thanks", "what is 2", "what's 2", "what is the capital",
     "yes", "no", "ok", "okay", "goodbye", "bye", "who are you",
 ]
-CODING_KEYWORDS = [
-    "haskell", "python", "javascript", "typescript", "rust", "golang", "java", "cpp", "c++", "c#", "swift",
-    "kotlin", "ruby", "php", "scala", "perl", "lua", "elixir", "clojure", "dart", "sql",
-    "function", "class", "method", "variable", "loop", "array", "list", "dict", "string", "int",
-    "code", "program", "script", "algorithm", "compile", "debug", "error", "bug", "test",
-    "api", "endpoint", "route", "database", "query", "server", "client", "frontend", "backend",
-    "recursion", "lambda", "monad", "functor", "applicative", "typeclass", "instance", "derive",
-]
-
 COMPLEX_PATTERNS = [
     r"\bwrite\b.*\bcode\b", r"\bimplement\b", r"\bcreate a\b.*\bfunction\b",
     r"\breview\b.*\bcode\b", r"\bsecurity\b.*\breview\b", r"\brefactor\b",
@@ -98,49 +89,29 @@ SECURITY_PATTERNS = [r"\bsecurity\b", r"\bvulnerability\b", r"\bsqli\b", r"\bxss
 #  Complexity Classifier
 # ═══════════════════════════════════════════
 
-def classify_complexity(prompt: str) -> str:
-    """Classify a prompt as 'simple', 'medium', or 'complex'."""
-    p = prompt.lower().strip()
-
-    # Simple: single facts, greetings, math
-    for kw in SIMPLE_KEYWORDS:
-        if p.startswith(kw) or p == kw:
-            return "simple"
-
-    # Very short questions are usually simple
-    if len(p.split()) <= 5 and "?" in p:
-        return "simple"
-
-    # Complex: matches complex patterns
-    for pat in COMPLEX_PATTERNS:
-        if re.search(pat, p):
-            return "complex"
-
-    # Longer prompts are more likely complex
-    word_count = len(p.split())
-    if word_count > 50:
-        return "complex"
-    if word_count > 20:
-        return "medium"
-
-    return "medium"
-
-
-def classify_agent_task(prompt: str) -> str | None:
-    """Classify if a prompt should go to an agent. Returns agent type or None."""
-    p = prompt.lower()
-    is_code = any(kw in p for kw in ["code", "function", "script", "program", "app", "api", "endpoint"])
-    is_writer = any(re.search(pat, p) for pat in WRITER_PATTERNS)
-    is_reviewer = any(re.search(pat, p) for pat in REVIEWER_PATTERNS)
-    is_security = any(re.search(pat, p) for pat in SECURITY_PATTERNS)
-
-    if is_security and (is_code or is_reviewer):
-        return "security_reviewer"
-    if is_reviewer and is_code:
-        return "reviewer"
-    if is_writer and is_code:
-        return "writer"
-    return None  # Not an agent task
+def classify_with_model(prompt: str) -> dict:
+    """Use the 3B router model to classify the question and recommend a route."""
+    client = OpenAI(base_url=ROUTER_URL, api_key="not-needed")
+    try:
+        r = client.chat.completions.create(
+            model="qwen2.5-3b",
+            messages=[
+                {"role": "system", "content": "Classify the user's question and respond with ONE line: type=<simple|medium|complex|coding|gaming|agent> model=<router|granite|coder|web_search>\nExamples:\n'what is 2+2?' -> type=simple model=router\n'explain quantum computing' -> type=medium model=granite\n'write a python function' -> type=coding model=coder\n'best hsr teammates' -> type=gaming model=web_search\n'security audit this code' -> type=agent model=coder\n'review my code' -> type=agent model=coder"},
+                {"role": "user", "content": prompt},
+            ],
+            max_tokens=50,
+        )
+        result = r.choices[0].message.content or ""
+        lines = result.strip().split("\n")
+        classification = {"type": "medium", "model": "granite"}
+        for line in lines:
+            if line.startswith("type="):
+                classification["type"] = line.split("=", 1)[1].strip()
+            elif line.startswith("model="):
+                classification["model"] = line.split("=", 1)[1].strip()
+        return classification
+    except Exception as e:
+        return {"type": "medium", "model": "granite"}
 
 
 # ═══════════════════════════════════════════
@@ -275,36 +246,24 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         t0 = time.time()
-        complexity = classify_complexity(last_user)
-        agent_type = classify_agent_task(last_user) if complexity == "complex" else None
+        # Use 3B model to classify the question and route
+        classification = classify_with_model(last_user)
+        model_type = classification.get("model", "granite")
+        question_type = classification.get("type", "medium")
 
-        # Check if web search or RAG is needed (at any complexity level)
-        needs_web = any(kw in last_user.lower() for kw in ["himeko", "hsr", "honkai", "genshin", "star rail", "zzz", "wuthering", "anime", "manga", "best teammate", "tier list", "build", "weapon", "team comp", "games", "pop culture", "current", "news", "weather", "latest", "search", "find", "who is", "what is"])
-        needs_rag = any(kw in last_user.lower() for kw in ["rag", "knowledge base", "chroma", "what info", "stored in"])
-
-        # Coding questions → coder model regardless of complexity
-        if any(kw in last_user.lower() for kw in CODING_KEYWORDS):
-            response = call_qwen(messages, max_tokens=max_tokens)
-            route_info = "coder"
-        elif needs_web:
+        # Route based on classification
+        if model_type == "web_search":
             response = web_search(last_user)
             route_info = "web_search"
-        elif needs_rag:
-            response = rag_query(last_user)
-            route_info = "rag"
-        elif agent_type:
-            prompt = AGENT_PROMPTS[agent_type]
-            response = call_qwen(messages, system=prompt, max_tokens=max_tokens)
-            route_info = f"agent:{agent_type}"
-        elif model == "simple" or complexity == "simple":
+        elif model_type == "coder":
+            response = call_qwen(messages, max_tokens=max_tokens)
+            route_info = "coder"
+        elif model_type == "router" or question_type == "simple":
             response = call_router(messages, max_tokens=max_tokens)
             route_info = "simple"
-        elif model == "complex" or complexity == "complex":
-            response = call_granite(messages, max_tokens=max_tokens)
-            route_info = "complex"
         else:
             response = call_granite(messages, max_tokens=max_tokens)
-            route_info = "medium"
+            route_info = question_type
 
         elapsed = round((time.time() - t0) * 1000)
 
