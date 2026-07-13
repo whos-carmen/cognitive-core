@@ -109,6 +109,14 @@ def classify_with_model(prompt: str) -> dict:
                 classification["type"] = line.split("=", 1)[1].strip()
             elif line.startswith("model="):
                 classification["model"] = line.split("=", 1)[1].strip()
+        # Also handle single-line format like 'type=simple model=router' or 'type=coding,model=coder'
+        for line in lines:
+            parts = line.replace(",", " ").replace("  ", " ").split()
+            for p in parts:
+                if p.startswith("type="):
+                    classification["type"] = p.split("=", 1)[1].strip()
+                elif p.startswith("model="):
+                    classification["model"] = p.split("=", 1)[1].strip()
         return classification
     except Exception as e:
         return {"type": "medium", "model": "granite"}
