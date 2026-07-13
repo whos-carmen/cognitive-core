@@ -245,7 +245,7 @@ class Agent:
             response = self.client.chat.completions.create(
                 model="minicpm5",
                 messages=messages,
-                max_tokens=800,
+                max_tokens=128,
                 stream=True,
             )
             for chunk in response:
