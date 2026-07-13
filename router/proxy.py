@@ -41,7 +41,20 @@ def web_search(query: str, max_results: int = 5) -> str:
         results = result.get("results", [])
         if not results:
             return "No web results found."
-        return "" + "\n\n".join(f"Title: {r.get('title','')}\nURL: {r.get('url','')}\n{r.get('content','')}" for r in results[:3])
+        snippets = "\n\n".join(f"Title: {r.get('title','')}\n{r.get('content','')}" for r in results[:5])
+        try:
+            client = OpenAI(base_url=RAG_URL, api_key="not-needed")
+            r = client.chat.completions.create(
+                model="qwen2.5-7b",
+                messages=[
+                    {"role": "system", "content": "Given web search results, write a clear, accurate answer. Cite specific details. If results are contradictory, say so."},
+                    {"role": "user", "content": f"Results:\n{snippets}\n\nQuestion: {query}"}
+                ],
+                max_tokens=500,
+            )
+            return r.choices[0].message.content or snippets
+        except:
+            return snippets
     except Exception as e:
         return f"Web search error: {e}"
 
