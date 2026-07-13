@@ -109,7 +109,7 @@ def classify_with_model(prompt: str) -> dict:
         r = client.chat.completions.create(
             model="qwen2.5-3b",
             messages=[
-                {"role": "system", "content": "Classify the user's question and respond with ONE line: type=<simple|medium|complex|coding|gaming|agent> model=<router|granite|coder|web_search>\nExamples:\n'what is 2+2?' -> type=simple model=router\n'explain quantum computing' -> type=medium model=granite\n'write a python function' -> type=coding model=coder\n'best hsr teammates' -> type=gaming model=web_search\n'security audit this code' -> type=agent model=coder\n'review my code' -> type=agent model=coder"},
+                {"role": "system", "content": "Route this to the best model. Reply with: type=<simple|complex|coding|gaming|other> model=<router|granite|coder|web_search>\n- model=router: short simple facts\n- model=granite: explanations, analysis, open questions\n- model=coder: programming, code, debugging\n- model=web_search: current events, games, specific recent info, weather, people"},
                 {"role": "user", "content": prompt},
             ],
             max_tokens=50,
@@ -285,6 +285,17 @@ class Handler(BaseHTTPRequestHandler):
         else:
             response = call_granite(messages, max_tokens=max_tokens)
             route_info = question_type
+
+        # Hallucination check: if model made up hypothetical code/settings, fall back to web search
+        if route_info in ("coder", "granite", "simple", "complex", "medium"):
+            hallucination_markers = ["let's assume", "i'll assume", "hypothetical", "since you haven't provided",
+                                     "assuming this is a", "in a hypothetical", "let us assume", "we'll assume"]
+            if any(m in response.lower()[:200] for m in hallucination_markers):
+                if route_info != "coder" or True:  # always try web fallback for hallucinations
+                    ws_response = web_search(last_user)
+                    if ws_response and "No web results" not in ws_response and "Web search error" not in ws_response:
+                        response = ws_response
+                        route_info = "web_search_fallback"
 
         elapsed = round((time.time() - t0) * 1000)
 
