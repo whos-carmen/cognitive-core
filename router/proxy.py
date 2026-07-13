@@ -210,7 +210,8 @@ Output a structured security audit with severity levels (CRITICAL, HIGH, MEDIUM,
 
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
-        pass
+        if args and len(args) > 1:
+            print(f"  [{args[0]}] {args[1]} {args[2]}", flush=True)
 
     def do_GET(self):
         path = urlparse(self.path).path
