@@ -101,7 +101,7 @@ def call_router(messages: list, max_tokens: int = 500) -> str:
     """Call the fast 1B model."""
     client = OpenAI(base_url=ROUTER_URL, api_key="not-needed")
     try:
-        r = client.chat.completions.create(model="minicpm5", messages=messages, max_tokens=max_tokens)
+        r = client.chat.completions.create(model="qwen2.5-3b", messages=messages, max_tokens=max_tokens)
         return r.choices[0].message.content or ""
     except Exception as e:
         return f"Error: {e}"
@@ -111,7 +111,7 @@ def call_granite(messages: list, max_tokens: int = 800) -> str:
     """Call Granite 8B for quality responses."""
     client = OpenAI(base_url=RAG_URL, api_key="not-needed")
     try:
-        r = client.chat.completions.create(model="granite", messages=messages, max_tokens=max_tokens)
+        r = client.chat.completions.create(model="qwen2.5-7b", messages=messages, max_tokens=max_tokens)
         return r.choices[0].message.content or ""
     except Exception as e:
         return f"Error: {e}"
@@ -123,7 +123,7 @@ def call_qwen(messages: list, system: str = None, max_tokens: int = 1000) -> str
     if system:
         messages = [{"role": "system", "content": system}] + messages
     try:
-        r = client.chat.completions.create(model="qwen3.5-4b", messages=messages, max_tokens=max_tokens)
+        r = client.chat.completions.create(model="qwen2.5-coder-7b", messages=messages, max_tokens=max_tokens)
         content = r.choices[0].message.content or ""
         reasoning = r.choices[0].message.reasoning_content or ""
         return content or reasoning or ""
