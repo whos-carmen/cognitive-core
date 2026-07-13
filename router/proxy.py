@@ -22,9 +22,50 @@ from urllib.parse import urlparse
 from openai import OpenAI
 
 # ── Model endpoints ──
-ROUTER_URL = "http://localhost:8081/v1"     # 1B Luminia (fast)
-RAG_URL = "http://localhost:8082/v1"        # Granite 8B (quality)
-AGENT_URL = "http://localhost:8083/v1"      # Qwen 4B (agentic)
+ROUTER_URL = "http://localhost:8081/v1"     # Qwen2.5-3B (fast)
+RAG_URL = "http://localhost:8082/v1"        # Qwen2.5-7B (quality)
+AGENT_URL = "http://localhost:8083/v1"      # Qwen2.5-Coder-7B (agentic)
+
+# ── Tavily web search (via subprocess npx) ──
+def web_search(query: str, max_results: int = 5) -> str:
+    """Search the web via Tavily REST API."""
+    import urllib.request, urllib.parse, json
+    try:
+        api_key = os.environ.get("TAVILY_API_KEY", "")
+        if not api_key:
+            return "TAVILY_API_KEY not set."
+        data = json.dumps({"api_key": api_key, "query": query, "max_results": max_results, "search_depth": "basic"}).encode()
+        req = urllib.request.Request("https://api.tavily.com/search", data=data, headers={"Content-Type": "application/json"}, method="POST")
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            result = json.loads(resp.read())
+        results = result.get("results", [])
+        if not results:
+            return "No web results found."
+        return "" + "\n\n".join(f"Title: {r.get('title','')}\nURL: {r.get('url','')}\n{r.get('content','')}" for r in results[:3])
+    except Exception as e:
+        return f"Web search error: {e}"
+
+# ── Chroma RAG ──
+CHROMA_PATH = os.path.join(os.path.dirname(__file__), "chroma_db")
+def rag_query(query: str) -> str:
+    """Query the Chroma knowledge base."""
+    try:
+        from sentence_transformers import SentenceTransformer
+        import chromadb
+        embed = SentenceTransformer("ibm-granite/granite-embedding-english-r2")
+        db = chromadb.PersistentClient(path=CHROMA_PATH)
+        collection = db.get_or_create_collection("knowledge")
+        if collection.count() == 0:
+            return "Knowledge base is empty."
+        q_emb = embed.encode([query], normalize_embeddings=True).tolist()[0]
+        results = collection.query(query_embeddings=[q_emb], n_results=3)
+        docs = results.get("documents", [[]])[0]
+        metas = results.get("metadatas", [[]])[0]
+        if not docs:
+            return "No relevant docs found."
+        return "\n---\n".join(f"[{metas[i].get('source','?') if metas[i] else '?'}]\n{docs[i][:300]}" for i in range(len(docs)))
+    except Exception as e:
+        return f"RAG error: {e}"
 
 # ── Complexity thresholds ──
 SIMPLE_KEYWORDS = [
@@ -218,8 +259,18 @@ class Handler(BaseHTTPRequestHandler):
         complexity = classify_complexity(last_user)
         agent_type = classify_agent_task(last_user) if complexity == "complex" else None
 
+        # Check if web search is needed
+        needs_web = complexity == "complex" and any(kw in last_user.lower() for kw in ["what is hsr", "himeko", "current", "news", "weather", "game", "honkai", "release", "price", "latest", "search", "find", "who is", "best teammate", "teams for", "tier list"])
+        needs_rag = any(kw in last_user.lower() for kw in ["rag", "knowledge base", "chroma", "what info", "stored in"])
+
         # Route
-        if agent_type:
+        if needs_web:
+            response = web_search(last_user)
+            route_info = "web_search"
+        elif needs_rag:
+            response = rag_query(last_user)
+            route_info = "rag"
+        elif agent_type:
             prompt = AGENT_PROMPTS[agent_type]
             response = call_qwen(messages, system=prompt, max_tokens=max_tokens)
             route_info = f"agent:{agent_type}"
