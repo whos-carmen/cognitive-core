@@ -565,7 +565,7 @@ class Agent:
                 model="granite",
                 messages=[
                     {"role": "system", "content": "You are a helpful AI assistant running in the Cognitive Core system. Answer questions clearly and concisely."},
-                    {"role": "user", "content": prompt},
+                    {"role": "user", "content": f"Answer this question directly: {prompt}**"},
                 ],
                 max_tokens=600,
             )
