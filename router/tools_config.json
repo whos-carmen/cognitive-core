@@ -15,10 +15,10 @@
   },
 
   "agent_model": {
-    "description": "Small model specialized for tool/bash generation. Used when the router fails to generate correct tool calls.",
+    "description": "General instruct model for routing decisions. Points to Qwen2.5-7B-Instruct.",
     "enabled": true,
-    "url": "http://localhost:8083/v1",
-    "model": "qwen3.5-4b",
+    "url": "http://localhost:8082/v1",
+    "model": "qwen2.5-7b",
     "api_key": "not-needed"
   },
 
