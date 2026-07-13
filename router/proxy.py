@@ -241,7 +241,6 @@ class Handler(BaseHTTPRequestHandler):
         body = json.loads(self.rfile.read(length))
         # Strip OpenAI-specific fields that we don't support
         body.pop("stream_options", None)
-        body.pop("stream", None)
         messages = body.get("messages", [])
         model = body.get("model", "auto")
         stream = body.get("stream", False)
@@ -325,7 +324,6 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Connection", "keep-alive")
         self.end_headers()
 
-        # Stream in chunks
         chunk_size = 20
         for i in range(0, len(content), chunk_size):
             chunk = content[i:i+chunk_size]
@@ -340,7 +338,15 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.flush()
             time.sleep(0.01)
 
-        # Done
+        # Final chunk with finish_reason: stop (OpenAI clients check this)
+        final = json.dumps({
+            "id": f"chatcmpl-{int(time.time())}",
+            "object": "chat.completion.chunk",
+            "created": int(time.time()),
+            "model": model,
+            "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+        })
+        self.wfile.write(f"data: {final}\n\n".encode())
         self.wfile.write(f"data: [DONE]\n\n".encode())
 
     def _send_error(self, msg: str):
