@@ -244,11 +244,18 @@ class Handler(BaseHTTPRequestHandler):
         stream = body.get("stream", False)
         max_tokens = body.get("max_tokens", 1000)
 
-        # Extract the last user message
+        # Extract the last user message (handle both string and list content)
         last_user = ""
         for m in reversed(messages):
             if m["role"] == "user":
-                last_user = m["content"]
+                raw = m["content"]
+                if isinstance(raw, str):
+                    last_user = raw
+                elif isinstance(raw, list):
+                    parts = [p.get("text","") for p in raw if isinstance(p, dict)]
+                    last_user = " ".join(parts)
+                else:
+                    last_user = str(raw)
                 break
 
         if not last_user:

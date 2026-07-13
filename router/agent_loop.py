@@ -417,6 +417,19 @@ class Agent:
                                     self._write_trace(prompt, tool_for_rag, rag_result)
                                     self._write_log(TOOLS_LOG, {"timestamp": str(datetime.now()), "tool": tool_for_rag, "result_snippet": rag_result[:200]})
                                     return rag_result
+                    # Game/media keywords → always use web_search, skip agent model
+                    game_keywords = ["himeko", "hsr", "honkai", "genshin", "star rail", "zzz", "wuthering", "anime", "manga", "tier list", "best team", "build for", "teammates", "weapon", "character"]
+                    if any(kw in prompt.lower() for kw in game_keywords):
+                        if on_token:
+                            on_token("reasoning", "\n[game/media query → web search]\n")
+                        # Re-route to web_search
+                        ws_map = self.tool_mappings.get("web_search")
+                        if ws_map:
+                            mcp_p = {"query": prompt, "max_results": 5}
+                            result = await self.mcp.call_tool(ws_map["mcp_server"], ws_map["mcp_tool"], mcp_p)
+                            synthesis = self._synthesize(prompt, result, on_token)
+                            self._save_session(session_id, session_history, prompt, synthesis, [])
+                            return synthesis
                     # Agent model can suggest a different tool for any tool type
                     if self._agent_cfg.get("enabled"):
                         agent_advice = self._query_agent(f"The user asked: {prompt}\nWhich tool should be used? Options: web_search (for current events, web info, games, pop culture, news, people, media — USE THIS FIRST if unsure), rag_query (for project knowledge), granite_respond (for general Q&A), shell_exec (for bash commands), file_search (for finding files). Reply with just the tool name and parameters in XML: <function name=\"tool\"><param name=\"param\">value</param></function>")
